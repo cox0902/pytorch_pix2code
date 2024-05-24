@@ -249,8 +249,8 @@ class Trainer:
 
             print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
-            hypotheses = torch.from_numpy(np.stack(hypotheses, axis=0))
-            references = torch.from_numpy(np.stack(references, axis=0))
+            hypotheses = torch.stack(hypotheses)
+            references = torch.stack(references)
             metrics.reset(len(data_loader))
             metrics.update(predicts=hypotheses, targets=references)
             print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
