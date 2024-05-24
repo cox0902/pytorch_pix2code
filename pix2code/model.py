@@ -126,7 +126,7 @@ class Pix2Code(nn.Module):
         context = F.one_hot(batch["code"][:, :-1].long(), num_classes=90).float()  # -> [batch_size, seq_length, vocab_size]
 
         encoded_image = self.image_encoder(batch["image"])
-        context_length = batch["code_len"] - 1
+        context_length = (batch["code_len"] - 1).cpu()
         encoded_context = self.context_encoder(context, context_length)
         decoded = self.decoder(encoded_image, encoded_context, context_length)  # -> [-1, vocab_size]
 
