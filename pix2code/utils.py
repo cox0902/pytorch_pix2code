@@ -63,7 +63,7 @@ def sort_n_pack_padded_sequence(x, x_len) -> Tuple[Any, Any]:
     _, idx_unsort = torch.sort(idx_sort, dim=0)
     x_sort = torch.index_select(x, dim=0, index=idx_sort)
     x_lens_sort = torch.index_select(x_len, dim=0, index=idx_sort)
-    x_packed = nn.utils.rnn.pack_padded_sequence(x_sort, x_lens_sort, batch_first=True)
+    x_packed = nn.utils.rnn.pack_padded_sequence(x_sort, x_lens_sort.cpu(), batch_first=True)
     return x_packed, idx_unsort
 
 
