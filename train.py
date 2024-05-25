@@ -9,6 +9,8 @@ from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 
+from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
+
 from pix2code.utils import seed_everything
 from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics
@@ -25,6 +27,7 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
+    parser.add_argument("--metric", default="auc", type=str)
 
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
@@ -66,8 +69,16 @@ def main(args):
     
     trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
+    
+    if args.metric == "acc":
+        metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)
+    elif args.metric == "auc":
+        metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAUROC)
+    else:
+        assert False
+
     trainer.fit(epochs=args.epochs, train_loader=train_loader, valid_loader=valid_loader, 
-                metrics=SimpleMulticlassMetrics(90), proof_of_concept=args.proof_of_concept)
+                metrics=metrics, proof_of_concept=args.proof_of_concept)
     
     print("=" * 100)
     # test_set = ImageCodeDataset(image_path / "images.hdf5", args.code_path, split["test"], 
