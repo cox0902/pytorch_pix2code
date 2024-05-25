@@ -40,6 +40,8 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--epochs", default=120, type=int)
 
+    parser.add_argument("--no-comma", action="store_false")
+
     return parser
 
 
@@ -59,12 +61,23 @@ def main(args):
         optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
     split = np.load(args.split_path)
-    train_set = ImageCodeDataset(args.image_path, args.code_path, split["train"], transform=PresetEval())
+    
+    if not args.no_comma:
+        train_set = ImageCodeDataset(args.image_path, args.code_path, split["train"], transform=PresetEval())
+    else:
+        train_set = ImageCodeDataset(args.image_path, args.code_path, split["train"], transform=PresetEval(),
+                                     has_comma=False)
+    
     train_set.summary()
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
-    valid_set = ImageCodeDataset(args.image_path, args.code_path, split["valid"], transform=PresetEval())
+    if not args.no_comma:
+        valid_set = ImageCodeDataset(args.image_path, args.code_path, split["valid"], transform=PresetEval())
+    else:
+        valid_set = ImageCodeDataset(args.image_path, args.code_path, split["valid"], transform=PresetEval(),
+                                     has_comma=False)
+   
     valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     
     trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=generator,
@@ -81,12 +94,17 @@ def main(args):
                 metrics=metrics, proof_of_concept=args.proof_of_concept)
     
     print("=" * 100)
-    # test_set = ImageCodeDataset(image_path / "images.hdf5", args.code_path, split["test"], 
-    #                             transform=PresetEval())
-    # test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
+    if not args.no_comma:
+        test_set = ImageCodeDataset(args.image_path, args.code_path, split["test"], transform=PresetEval())
+    else:
+        test_set = ImageCodeDataset(args.image_path, args.code_path, split["test"], transform=PresetEval(),
+                                     has_comma=False)
+   
+    test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
+    
                          
     trainer = Trainer.load_checkpoint("./BEST.pth.tar")
-    # _ = trainer.test(data_loader=test_loader, metrics=SimpleBinaryMetrics(), proof_of_concept=args.proof_of_concept)
+    _ = trainer.test(data_loader=test_loader, metrics=metrics, proof_of_concept=args.proof_of_concept)
 
 
 if __name__ == "__main__":

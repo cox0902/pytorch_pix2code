@@ -10,12 +10,13 @@ from torch.utils.data import Dataset
 class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any],
-                 transform: Optional[Any] = None):
+                 transform: Optional[Any] = None, has_comma: bool = True):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
         self.split = split
         self.transform = transform
+        self.has_comma = has_comma
         
         self.hi = h5py.File(image_path, "r")
         self.images = self.hi["images"]
@@ -46,6 +47,16 @@ class ImageCodeDataset(Dataset):
             image = self.transform(image)
 
         code = self.codes[self.__idx(index)]
+        if not self.has_comma:
+            code_wo_comma = np.zeros_like(code)
+            code = code[code != 7]
+            code_len = len(code[code != 0])
+            code_wo_comma[:len(code)] = code
+            return {
+                "image": image,
+                "code": code_wo_comma,
+                "code_len": code_len
+            }
         # code = torch.from_numpy(self.codes[self.__idx(index)]).float()
         code_len = self.code_lens[self.__idx(index)]
         return {
