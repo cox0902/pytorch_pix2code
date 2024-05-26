@@ -307,8 +307,8 @@ class Trainer:
 
             print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
             
-            hypotheses = torch.Tensor(hypotheses)
-            references = torch.Tensor(references)
+            hypotheses = torch.stack(hypotheses)
+            references = torch.stack(references)
             metrics.reset(len(data_loader))
             metrics.update(predicts=hypotheses, targets=references)
             print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
