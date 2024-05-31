@@ -24,7 +24,7 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--proof-of-concept", action="store_true")
     parser.add_argument("--lr-find", action="store_true")
-    parser.add_argument("--seed", type=int)
+    parser.add_argument("--seed", default=0, type=int)
 
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)

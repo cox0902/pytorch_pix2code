@@ -215,8 +215,6 @@ class Trainer:
                 logits, predicts, targets = self.model(batch)
                 loss = self.criterion(logits, targets)
 
-            total_loss += loss.item()
-
             self.optimizer.zero_grad()
             if self.scaler is not None:
                 self.scaler.scale(loss).backward()
@@ -241,6 +239,7 @@ class Trainer:
                     self.ema_model.n_averaged.fill_(0)
 
             metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
+            total_loss += loss.item()
 
             if i % self.print_freq == 0:
                 print(f"Epoch [{epoch}][{i + 1}/{len(data_loader)}]\t{metrics.format()}")
@@ -267,9 +266,9 @@ class Trainer:
                 # targets = batch["target"]
                 logits, predicts, targets = model(batch)
                 loss = self.criterion(logits, targets)
-                total_loss += loss.item() * len(targets)
 
                 metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
+                total_loss += loss.item() * len(targets)
 
                 if i % self.print_freq == 0:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
