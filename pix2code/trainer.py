@@ -66,7 +66,7 @@ class ExponentialLR(LRScheduler):
 
 class Trainer:
 
-    def __init__(self, model: nn.Module, criterion: nn.Module, optimizer: optim.Optimizer, generator: torch.Generator,
+    def __init__(self, model: nn.Module, optimizer: optim.Optimizer, generator: torch.Generator,
                  is_ema: bool = False, use_amp: bool = False):
         self.print_freq: int = 100
         
@@ -100,8 +100,6 @@ class Trainer:
 
         self.scaler = GradScaler() if use_amp else None
 
-        if criterion is not None:
-            self.criterion = criterion.to(self.device)
         self.optimizer = optimizer
 
     def adjust_learning_rate(self, shrink_factor: float):
@@ -118,7 +116,6 @@ class Trainer:
             'epochs_since_improvement': epochs_since_improvement,
             'score': score,
             'model': self.model,
-            'criterion': self.criterion,
             'optimizer': self.optimizer,
             'scaler': self.scaler,
             'state': get_rng_state(self.generator)
@@ -143,7 +140,6 @@ class Trainer:
 
         model: nn.Module = saved['model']
         is_ema = 'ema_model' in saved
-        criterion = saved['criterion'] if 'criterion' in saved else None
         optimizer = saved['optimizer']
         scaler = saved['scaler'] if 'scaler' in saved else None
  
@@ -174,7 +170,7 @@ class Trainer:
         print(f"- epochs_since_improvement: {saved['epochs_since_improvement']}")
         print(f"- score     : {saved['score']}")
 
-        trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=None)
+        trainer = Trainer(model=model, optimizer=optimizer, generator=None)
         trainer.seed = saved["seed"] if "seed" in saved else None
         trainer.epoch = saved["epoch"] + 1
         trainer.epochs_since_improvement = saved["epochs_since_improvement"]
@@ -200,7 +196,7 @@ class Trainer:
             return self.ema_model.module
         return self.model
 
-    def train(self, data_loader: DataLoader, metrics: Metrics, epoch: int, proof_of_concept: bool = False):
+    def train(self, data_loader: DataLoader, metrics: Metrics, epoch: int, proof_of_concept: bool = False) -> float:
         self.model.train()
         metrics.reset(len(data_loader))
 
@@ -212,8 +208,7 @@ class Trainer:
             # targets = batch["target"]
 
             with autocast(enabled=self.scaler is not None):
-                logits, predicts, targets = self.model(batch)
-                loss = self.criterion(logits, targets)
+                loss, predicts, targets = self.model(batch)
 
             self.optimizer.zero_grad()
             if self.scaler is not None:
@@ -250,7 +245,7 @@ class Trainer:
         print(f"Epoch [{epoch}][{i + 1}/{len(data_loader)}]\t{metrics.format()}")
         return total_loss
         
-    def valid(self, data_loader: DataLoader, metrics: Metrics, proof_of_concept: bool = False) -> float:
+    def valid(self, data_loader: DataLoader, metrics: Metrics, proof_of_concept: bool = False) -> Tuple[float, float]:
         model = self.get_model()
         model.eval()        
         metrics.reset(len(data_loader))
@@ -264,8 +259,7 @@ class Trainer:
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
                 # targets = batch["target"]
-                logits, predicts, targets = model(batch)
-                loss = self.criterion(logits, targets)
+                loss, predicts, targets = model(batch)
 
                 metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
                 total_loss += loss.item() * len(targets)
@@ -274,7 +268,7 @@ class Trainer:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
                 references.extend(targets.squeeze())
-                hypotheses.extend(logits.squeeze())
+                hypotheses.extend(predicts.squeeze())
 
                 if proof_of_concept:
                     break
@@ -289,15 +283,14 @@ class Trainer:
 
         return metrics.compute(hypotheses, references), total_loss / len(data_loader.dataset)
     
-    def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, proof_of_concept: bool = False,
-             return_logits: bool = False):
+    def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, 
+             proof_of_concept: bool = False):
         model = self.get_model()
         model.eval()
         metrics.reset(len(data_loader))
 
         references = []
         hypotheses = []
-        hypologits = []
         activations = []
 
         print()
@@ -316,13 +309,13 @@ class Trainer:
                     else:
                         handler = getattr(model.resnet, hook).register_forward_hook(fn_hook)
 
-                    logits, predicts, targets = model(batch)
+                    _, predicts, targets = model(batch)
                     handler.remove()
 
                     # print(activation[hook].shape)
                     activations.extend(activation[hook].squeeze().cpu().numpy())
                 else:
-                    logits, predicts, targets = model(batch)
+                    _, predicts, targets = model(batch)
                
                 metrics.update(None, None)  # 
 
@@ -331,8 +324,6 @@ class Trainer:
 
                 references.extend(targets.squeeze())
                 hypotheses.extend(predicts.squeeze())
-                if return_logits:
-                    hypologits.extend(logits.squeeze())
 
                 if proof_of_concept:
                     break
@@ -348,13 +339,8 @@ class Trainer:
             metrics.compute(hypotheses, references)
 
         if hook is None:
-            if return_logits:
-                return hypotheses, references, torch.Tensor(hypologits), None
-            else:
-                return hypotheses, references, None, None
-        if return_logits:
-            return hypotheses, references, torch.Tensor(hypologits), np.array(activations)
-        return hypotheses, references, None, np.array(activations)
+            return hypotheses, references, None
+        return hypotheses, references, np.array(activations)
 
     def lr_find(self, end_lr: float, step_mode: Literal["exp", "linear"], epochs: int, 
                 train_loader: DataLoader, valid_loader: Optional[DataLoader], 

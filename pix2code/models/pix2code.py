@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import sort_n_pack_padded_sequence, pad_packed_sequence_n_unsort
+from ..utils import sort_n_pack_padded_sequence, pad_packed_sequence_n_unsort
 
 
 class ImageEncoder(nn.Module):
@@ -120,6 +120,7 @@ class Pix2Code(nn.Module):
         self.image_encoder = ImageEncoder()
         self.context_encoder = ContextEncoder(vocab_size)
         self.decoder = Decoder(vocab_size)
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, batch: Dict) -> torch.Tensor:
         # batch["code"] = [batch_size, seq_length]
@@ -131,4 +132,6 @@ class Pix2Code(nn.Module):
         decoded = self.decoder(encoded_image, encoded_context, context_length)  # -> [-1, vocab_size]
 
         target_packed, _ = sort_n_pack_padded_sequence(batch["code"][:, 1:].long(), context_length)
-        return decoded, F.softmax(decoded, dim=-1), target_packed.data
+
+        loss = self.criterion(decoded, target_packed.data)
+        return loss, F.softmax(decoded, dim=-1), target_packed.data

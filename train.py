@@ -16,13 +16,14 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.model import Pix2Code
+from pix2code.models import Pix2Code, ImageCaption
 
 
 def get_args_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--proof-of-concept", action="store_true")
+    parser.add_argument("--model", type=str)
     parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
 
@@ -53,8 +54,10 @@ def main(args):
 
     generator, seed_worker = seed_everything(args.seed)
 
-    model = Pix2Code(vocab_size=90)
-    criterion = nn.CrossEntropyLoss()
+    if args.model == "pix2code":
+        model = Pix2Code(vocab_size=90)
+    elif args.model == 'imagecaption':
+        model = ImageCaption(vocab_size=90)
 
     if args.opt == "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -92,7 +95,7 @@ def main(args):
    
     valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     
-    trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=generator,
+    trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
     trainer.epochs_early_stop = 20
 
