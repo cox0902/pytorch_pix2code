@@ -23,6 +23,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--proof-of-concept", action="store_true")
+    parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", type=int)
 
     parser.add_argument("--opt", type=str)
@@ -94,10 +95,15 @@ def main(args):
     trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
     trainer.epochs_early_stop = 20
-    
+
     if args.grad_clip:
         trainer.grad_clip = 1.
         trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
+
+    if args.find_lr:
+        trainer.lr_find(end_lr=100., step_mode='exp', epochs=100,
+                        train_loader=train_loader, valid_loader=valid_loader)
+        return
     
     if args.metric == "acc":
         metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)

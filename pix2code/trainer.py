@@ -1,5 +1,5 @@
 
-from typing import Dict, Optional
+from typing import *
 
 import hashlib
 import numpy as np
@@ -8,6 +8,7 @@ from torch import nn
 from torch import optim
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim.swa_utils import AveragedModel
+from torch.optim.lr_scheduler import LRScheduler
 import torch.utils
 from torch.utils.data import DataLoader
 
@@ -36,6 +37,31 @@ class ExponentialMovingAverage(AveragedModel):
             else:
                 for p_ema, p_model in zip(ema_param_list, current_param_list):
                     p_ema.copy_(p_ema * ExponentialMovingAverage.decay + p_model * (1 - ExponentialMovingAverage.decay))
+
+
+class LinearLR(LRScheduler):
+
+    def __init__(self, optimizer: optim.Optimizer, end_lr: float, epochs: int):
+        self.end_lr = end_lr
+        self.epochs = epochs
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        r = self.last_epoch / (self.epochs - 1)
+        return [base_lr + r * (self.end_lr - base_lr) for base_lr in self.base_lrs]
+    
+
+class ExponentialLR(LRScheduler):
+
+    def __init__(self, optimizer: optim.Optimizer, end_lr: float, epochs: int):
+        self.end_lr = end_lr
+        self.epochs = epochs
+        super().__init__(optimizer)
+
+    def get_lr(self):
+        r = self.last_epoch / (self.epochs - 1)
+        return [base_lr * (self.end_lr / base_lr) ** r for base_lr in self.base_lrs]
+    
 
 
 class Trainer:
@@ -178,6 +204,8 @@ class Trainer:
         self.model.train()
         metrics.reset(len(data_loader))
 
+        total_loss = 0
+
         print()
         for i, batch in enumerate(data_loader):
             batch = self.to_device(batch)
@@ -186,6 +214,8 @@ class Trainer:
             with autocast(enabled=self.scaler is not None):
                 logits, predicts, targets = self.model(batch)
                 loss = self.criterion(logits, targets)
+
+            total_loss += loss.item()
 
             self.optimizer.zero_grad()
             if self.scaler is not None:
@@ -219,6 +249,7 @@ class Trainer:
                 break
 
         print(f"Epoch [{epoch}][{i + 1}/{len(data_loader)}]\t{metrics.format()}")
+        return total_loss
         
     def valid(self, data_loader: DataLoader, metrics: Metrics, proof_of_concept: bool = False) -> float:
         model = self.get_model()
@@ -227,6 +258,7 @@ class Trainer:
 
         references = []
         hypotheses = []
+        total_loss = 0
 
         print()
         with torch.no_grad():
@@ -235,6 +267,7 @@ class Trainer:
                 # targets = batch["target"]
                 logits, predicts, targets = model(batch)
                 loss = self.criterion(logits, targets)
+                total_loss += loss.item() * len(targets)
 
                 metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
 
@@ -255,7 +288,7 @@ class Trainer:
             metrics.update(predicts=hypotheses, targets=references)
             print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
-        return metrics.compute(hypotheses, references)
+        return metrics.compute(hypotheses, references), total_loss / len(data_loader.dataset)
     
     def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, proof_of_concept: bool = False,
              return_logits: bool = False):
@@ -324,6 +357,46 @@ class Trainer:
             return hypotheses, references, torch.Tensor(hypologits), np.array(activations)
         return hypotheses, references, None, np.array(activations)
 
+    def lr_find(self, end_lr: float, step_mode: Literal["exp", "linear"], epochs: int, 
+                train_loader: DataLoader, valid_loader: Optional[DataLoader], 
+                smooth_factor: float = 0.05, diverge_threshold: float = 5.):
+        history = { "lr": [], "loss": [] }
+        metrics = EmptyMetrics()
+
+        print("= Warmup")
+        self.train(train_loader, metrics, 0, proof_of_concept=True)
+        # self.save_checkpoint(epoch=0, epochs_since_improvement=0, score=loss, is_best=False)
+
+        if step_mode.lower() == "exp":
+            lr_schedule = ExponentialLR(self.optimizer, end_lr, epochs)
+        elif step_mode.lower() == "linear":
+            lr_schedule = LinearLR(self.optimizer, end_lr, epochs)
+        else:
+            assert False
+
+        best_loss = None
+        for epoch in range(epochs):
+            loss = self.train(train_loader, metrics, epoch + 1, proof_of_concept=True)
+            if valid_loader is not None:
+                loss = self.valid(valid_loader, metrics)
+            
+            history["lr"].append(lr_schedule.get_lr()[0])
+            lr_schedule.step()
+
+            if best_loss is None:
+                best_loss = loss
+            else:
+                loss = smooth_factor * loss + (1 - smooth_factor) * history["loss"][-1]
+                if loss < best_loss:
+                    best_loss = loss
+            
+            history["loss"].append(loss)
+            if loss >= diverge_threshold * best_loss:
+                print("= Early stop while diverge")
+                break
+
+        np.save("lr_find.npy", history)
+
     def fit(self, epochs: int, train_loader: DataLoader, valid_loader: DataLoader, metrics: Metrics,
             save_checkpoint: bool = True, proof_of_concept: bool = False):
         assert self.generator is not None
@@ -339,7 +412,7 @@ class Trainer:
 
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
 
-            recent_score = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
+            recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
             
             is_best = recent_score > best_score
             best_score = max(recent_score, best_score)
