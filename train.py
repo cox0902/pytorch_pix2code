@@ -100,7 +100,7 @@ def main(args):
         trainer.grad_clip = 1.
         trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
 
-    if args.find_lr:
+    if args.lr_find:
         trainer.lr_find(end_lr=100., step_mode='exp', epochs=100,
                         train_loader=train_loader, valid_loader=valid_loader)
         return
