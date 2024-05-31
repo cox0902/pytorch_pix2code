@@ -362,7 +362,7 @@ class Trainer:
         history = { "lr": [], "loss": [] }
         metrics = EmptyMetrics()
 
-        print("= Warmup")
+        print("\n= Warmup")
         self.train(train_loader, metrics, 0, proof_of_concept=True)
         # self.save_checkpoint(epoch=0, epochs_since_improvement=0, score=loss, is_best=False)
 
@@ -377,7 +377,7 @@ class Trainer:
         for epoch in range(epochs):
             loss = self.train(train_loader, metrics, epoch + 1, proof_of_concept=True)
             if valid_loader is not None:
-                loss = self.valid(valid_loader, metrics)
+                _, loss = self.valid(valid_loader, metrics)
             
             history["lr"].append(lr_schedule.get_lr()[0])
             lr_schedule.step()
