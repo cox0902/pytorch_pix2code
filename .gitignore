@@ -162,3 +162,7 @@ cython_debug/
 # Custom
 *.tar
 unit_test/
+*.sh
+datasets/
+*.ipynb
+.DS_Store

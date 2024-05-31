@@ -37,9 +37,10 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
     
+    parser.add_argument("--grad-clip", action="store_true")
     parser.add_argument("--ema", action="store_true")
     parser.add_argument("--amp", action="store_true")
-    parser.add_argument("--epochs", default=120, type=int)
+    parser.add_argument("--epochs", default=3600, type=int)
 
     parser.add_argument("--no-comma", action="store_false")
 
@@ -92,6 +93,11 @@ def main(args):
     
     trainer = Trainer(model=model, criterion=criterion, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
+    trainer.epochs_early_stop = 20
+    
+    if args.grad_clip:
+        trainer.grad_clip = 1.
+        trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
     
     if args.metric == "acc":
         metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)

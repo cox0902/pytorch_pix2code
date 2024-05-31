@@ -131,4 +131,4 @@ class Pix2Code(nn.Module):
         decoded = self.decoder(encoded_image, encoded_context, context_length)  # -> [-1, vocab_size]
 
         target_packed, _ = sort_n_pack_padded_sequence(batch["code"][:, 1:].long(), context_length)
-        return decoded, decoded, target_packed.data
+        return decoded, F.softmax(decoded, dim=-1), target_packed.data
