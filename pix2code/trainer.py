@@ -359,7 +359,7 @@ class Trainer:
     def lr_find(self, end_lr: float, step_mode: Literal["exp", "linear"], epochs: int, 
                 train_loader: DataLoader, valid_loader: Optional[DataLoader], 
                 smooth_factor: float = 0.05, diverge_threshold: float = 5.):
-        history = { "lr": [], "loss": [] }
+        history_lr, history_loss = [], []
         metrics = EmptyMetrics()
 
         print("\n= Warmup")
@@ -376,25 +376,30 @@ class Trainer:
         best_loss = None
         for epoch in range(epochs):
             loss = self.train(train_loader, metrics, epoch + 1, proof_of_concept=True)
+
+            if not all([torch.isfinite(p.grad) for p in self.model.parameters()]):
+                print("= Early stop while grad nan")
+                break
+
             if valid_loader is not None:
                 _, loss = self.valid(valid_loader, metrics)
-            
-            history["lr"].append(lr_schedule.get_lr()[0])
+
+            history_lr.append(lr_schedule.get_lr()[0])
             lr_schedule.step()
 
             if best_loss is None:
                 best_loss = loss
             else:
-                loss = smooth_factor * loss + (1 - smooth_factor) * history["loss"][-1]
+                loss = smooth_factor * loss + (1 - smooth_factor) * history_loss[-1]
                 if loss < best_loss:
                     best_loss = loss
             
-            history["loss"].append(loss)
+            history_loss.append(loss)
             if loss >= diverge_threshold * best_loss:
                 print("= Early stop while diverge")
                 break
 
-        np.save("lr_find.npy", history)
+        np.savez("lr_find.npz", lr=history_lr, loss=history_loss)
 
     def fit(self, epochs: int, train_loader: DataLoader, valid_loader: DataLoader, metrics: Metrics,
             save_checkpoint: bool = True, proof_of_concept: bool = False):

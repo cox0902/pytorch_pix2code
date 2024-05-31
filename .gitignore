@@ -166,3 +166,4 @@ unit_test/
 datasets/
 *.ipynb
 .DS_Store
+*.npy
