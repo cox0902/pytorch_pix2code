@@ -69,6 +69,7 @@ class Trainer:
     def __init__(self, model: nn.Module, optimizer: optim.Optimizer, generator: torch.Generator,
                  is_ema: bool = False, use_amp: bool = False):
         self.print_freq: int = 100
+        self.early_stop: bool = True
         
         self.warmup_epochs: int = 5
         self.epochs_early_stop: int = 10
@@ -397,7 +398,8 @@ class Trainer:
         for epoch in range(self.epoch, epochs):
             if epoch >= self.warmup_epochs:
                 if epochs_since_improvement == self.epochs_early_stop:
-                    break
+                    if self.early_stop:
+                        break
                 if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
                     self.adjust_learning_rate(0.8)
 
@@ -405,19 +407,20 @@ class Trainer:
 
             recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
             
+            is_best = recent_score > best_score
+            best_score = max(recent_score, best_score)
+            
             if epoch >= self.warmup_epochs:
-                is_best = recent_score > best_score
-                best_score = max(recent_score, best_score)
                 if not is_best:
                     epochs_since_improvement += 1
                     print(f"\nEpochs since last improvement: {epochs_since_improvement} ({best_score})\n")  # [OK]
                 else:
                     epochs_since_improvement = 0
 
-                # save checkpoint
-                self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
-                                    score=recent_score, is_best=is_best, 
-                                    save_checkpoint=save_checkpoint)
+            # save checkpoint
+            self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
+                                 score=recent_score, is_best=is_best, 
+                                 save_checkpoint=save_checkpoint)
             
             if proof_of_concept:
                 break

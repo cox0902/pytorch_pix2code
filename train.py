@@ -30,6 +30,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
     parser.add_argument("--metric", default="auc", type=str)
+    parser.add_argument("--early-stop", action="store_true")
 
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
@@ -99,6 +100,7 @@ def main(args):
                       is_ema=args.ema, use_amp=args.amp)
     trainer.epochs_early_stop = 20
     trainer.epochs_adjust_lr = 8
+    trainer.early_stop = args.early_stop
 
     if args.grad_clip:
         trainer.grad_clip = 1.
