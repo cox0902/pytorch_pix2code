@@ -98,6 +98,7 @@ def main(args):
     trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
     trainer.epochs_early_stop = 20
+    trainer.epochs_adjust_lr = 8
 
     if args.grad_clip:
         trainer.grad_clip = 1.

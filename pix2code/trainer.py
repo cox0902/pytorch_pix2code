@@ -395,27 +395,29 @@ class Trainer:
         best_score: float = self.best_score
 
         for epoch in range(self.epoch, epochs):
-            if epochs_since_improvement == self.epochs_early_stop:
-                break
-            if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
-                self.adjust_learning_rate(0.8)
+            if epoch >= self.warmup_epochs:
+                if epochs_since_improvement == self.epochs_early_stop:
+                    break
+                if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
+                    self.adjust_learning_rate(0.8)
 
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
 
             recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
             
-            is_best = recent_score > best_score
-            best_score = max(recent_score, best_score)
-            if not is_best:
-                epochs_since_improvement += 1
-                print(f"\nEpochs since last improvement: {epochs_since_improvement} ({best_score})\n")  # [OK]
-            else:
-                epochs_since_improvement = 0
+            if epoch >= self.warmup_epochs:
+                is_best = recent_score > best_score
+                best_score = max(recent_score, best_score)
+                if not is_best:
+                    epochs_since_improvement += 1
+                    print(f"\nEpochs since last improvement: {epochs_since_improvement} ({best_score})\n")  # [OK]
+                else:
+                    epochs_since_improvement = 0
 
-            # save checkpoint
-            self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
-                                 score=recent_score, is_best=is_best, 
-                                 save_checkpoint=save_checkpoint)
+                # save checkpoint
+                self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
+                                    score=recent_score, is_best=is_best, 
+                                    save_checkpoint=save_checkpoint)
             
             if proof_of_concept:
                 break
