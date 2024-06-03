@@ -24,6 +24,7 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--proof-of-concept", action="store_true")
     parser.add_argument("--model", type=str)
+    parser.add_argument("--compat", action="store_true")
     parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
 
@@ -62,6 +63,8 @@ def main(args):
     else:
         t = Trainer.load_checkpoint(args.model)
         model = t.get_inner_model()
+        if args.compat:
+            model.criterion = nn.CrossEntropyLoss()
 
     if args.opt == "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
