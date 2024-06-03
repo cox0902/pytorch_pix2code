@@ -1,1 +1,1 @@
-from .models import Pix2Code, ImageCaption
+from .models.pix2code import *
