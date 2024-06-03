@@ -59,6 +59,9 @@ def main(args):
         model = Pix2Code(vocab_size=90)
     elif args.model == 'imagecaption':
         model = ImageCaption(vocab_size=90)
+    else:
+        t = Trainer.load_checkpoint(args.model)
+        model = t.get_inner_model()
 
     if args.opt == "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
