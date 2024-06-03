@@ -84,8 +84,7 @@ def main(args):
         train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
                                      has_comma=False)
     
-    print("> Train set")
-    train_set.summary()
+    train_set.summary("> Train set")
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
@@ -95,8 +94,7 @@ def main(args):
         valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
                                      has_comma=False)
    
-    print("> Valid set")
-    valid_set.summary()
+    valid_set.summary("> Valid set")
     valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     
     trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
@@ -131,8 +129,7 @@ def main(args):
         test_set = ImageCodeDataset(args.image_path, args.code_path, split_test, transform=PresetEval(),
                                     has_comma=False)
    
-    print("> Test set")
-    test_set.summary()
+    test_set.summary("> Test set")
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
     
                          

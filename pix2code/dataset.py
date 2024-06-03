@@ -25,8 +25,10 @@ class ImageCodeDataset(Dataset):
         self.codes = self.hc["ivs"]
         self.code_lens = self.hc["les"]
 
-    def summary(self):
+    def summary(self, header: Optional[str] = None):
         print()
+        if header is not None:
+            print(header)
         print(f"Samples Count: {len(self):,}")
         print(f"   Max Length: {self.max_len:,}")
         print()
