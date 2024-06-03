@@ -36,7 +36,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
     parser.add_argument("--code-path", type=str)
-    parser.add_argument("--ignore-path", type=str)
+    parser.add_argument("--test-path", type=str)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -77,12 +77,6 @@ def main(args):
     split_train = split["train"]
     split_valid = split["valid"]
     split_test = split["test"]
-
-    if args.ignore_path is not None:
-        ignores = np.load(args.ignore_path)
-        split_train = np.array([each for each in split_train if each not in ignores])
-        split_valid = np.array([each for each in split_valid if each not in ignores])
-        split_test = np.array([each for each in split_test if each not in ignores])
     
     if not args.no_comma:
         train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval())
@@ -130,9 +124,9 @@ def main(args):
     
     print("=" * 100)
     if not args.no_comma:
-        test_set = ImageCodeDataset(args.image_path, args.code_path, split_test, transform=PresetEval())
+        test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval())
     else:
-        test_set = ImageCodeDataset(args.image_path, args.code_path, split_test, transform=PresetEval(),
+        test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
                                     has_comma=False)
    
     test_set.summary("> Test set")
