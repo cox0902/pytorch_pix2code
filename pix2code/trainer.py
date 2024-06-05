@@ -234,7 +234,7 @@ class Trainer:
                 if epoch < self.warmup_epochs:
                     self.ema_model.n_averaged.fill_(0)
 
-            metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
+            metrics.update(predicts=predicts, targets=targets, loss=loss.item())
             total_loss += loss.item()
 
             if i % self.print_freq == 0:
@@ -262,14 +262,14 @@ class Trainer:
                 # targets = batch["target"]
                 loss, predicts, targets = model(batch)
 
-                metrics.update(predicts=predicts.squeeze(), targets=targets.squeeze(), loss=loss.item())
+                metrics.update(predicts=predicts, targets=targets, loss=loss.item())
                 total_loss += loss.item() * len(targets)
 
                 if i % self.print_freq == 0:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
-                references.extend(targets.squeeze())
-                hypotheses.extend(predicts.squeeze())
+                references.extend(targets)
+                hypotheses.extend(predicts)
 
                 if proof_of_concept:
                     break
@@ -314,7 +314,7 @@ class Trainer:
                     handler.remove()
 
                     # print(activation[hook].shape)
-                    activations.extend(activation[hook].squeeze().cpu().numpy())
+                    activations.extend(activation[hook].squeeze().cpu().numpy())  # !! TODO: add n to squeeze
                 else:
                     _, predicts, targets = model(batch)
                
@@ -323,8 +323,8 @@ class Trainer:
                 if i % self.print_freq == 0:
                     print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
 
-                references.extend(targets.squeeze())
-                hypotheses.extend(predicts.squeeze())
+                references.extend(targets)
+                hypotheses.extend(predicts)
 
                 if proof_of_concept:
                     break
