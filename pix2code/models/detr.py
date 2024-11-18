@@ -45,15 +45,16 @@ class Detr(nn.Module):
         ignores = batch["ignore"].long()
 
         # propagate inputs through ResNet-50 up to avg-pool layer
-        x = self.backbone.conv1(inputs)
-        x = self.backbone.bn1(x)
-        x = self.backbone.relu(x)
-        x = self.backbone.maxpool(x)
+        # x = self.backbone.conv1(inputs)
+        # x = self.backbone.bn1(x)
+        # x = self.backbone.relu(x)
+        # x = self.backbone.maxpool(x)
 
-        x = self.backbone.layer1(x)
-        x = self.backbone.layer2(x)
-        x = self.backbone.layer3(x)
-        x = self.backbone.layer4(x)
+        # x = self.backbone.layer1(x)
+        # x = self.backbone.layer2(x)
+        # x = self.backbone.layer3(x)
+        # x = self.backbone.layer4(x)
+        x = self.backbone(inputs)
 
         # convert from 2048 to 256 feature planes for the transformer
         h = self.conv(x)
