@@ -83,16 +83,19 @@ def main(args):
     split_train = split["train"]
     split_valid = split["valid"]
     split_test = split["test"]
+
+    has_comma = (not args.no_comma)
+    has_rect = (args.model in ['detr'])
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
-                                 has_comma=(not args.no_comma))
+                                 has_comma=has_comma, has_rect=has_rect)
     
     train_set.summary("> Train set")
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
     valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                 has_comma=(not args.no_comma))
+                                 has_comma=has_comma, has_rect=has_rect)
    
     valid_set.summary("> Valid set")
     valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
@@ -124,7 +127,7 @@ def main(args):
     
     print("=" * 100)
     test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
-                                has_comma=(not args.no_comma))
+                                has_comma=has_comma, has_rect=has_rect)
    
     test_set.summary("> Test set")
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
