@@ -40,9 +40,16 @@ class Detr(nn.Module):
         inputs = batch["image"]
         caps = batch["code"].long()
         caplens = batch["code_len"]
-        bboxes = batch["rect"]
+        rects = batch["rect"]
         equals = batch["equal"].long()
         ignores = batch["ignore"].long()
+
+        print(inputs.shape)
+        print(caps.shape)
+        print(caplens.shape)
+        print(rects.shape)
+        print(equals.shape)
+        print(ignores.shape)
 
         # propagate inputs through ResNet-50 up to avg-pool layer
         # x = self.backbone.conv1(inputs)
@@ -82,7 +89,7 @@ class Detr(nn.Module):
 
         bbox_masks = (1 - equals) * (1 - ignores) * masks
 
-        bboxes_true = bboxes[bbox_masks]
+        bboxes_true = rects[bbox_masks]
         bboxes_pred = boxes[bbox_masks]
 
         bboxes_true = torchvision.ops.box_convert(bboxes_true, "cxcywh", "xyxy")
