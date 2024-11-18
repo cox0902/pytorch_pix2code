@@ -16,7 +16,7 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption
+from pix2code.models import Pix2Code, ImageCaption, Detr
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -62,6 +62,8 @@ def main(args):
         model = Pix2Code(vocab_size=90)
     elif args.model == 'imagecaption':
         model = ImageCaption(vocab_size=90)
+    elif args.model == 'detr':
+        model = Detr(num_classes=90)
     else:
         t = Trainer.load_checkpoint(args.model)
         model = t.get_inner_model()
@@ -72,6 +74,8 @@ def main(args):
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
     elif args.opt == "adamw":
         optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    elif args.opt == "rmsprop":
+        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
     else:
         optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
@@ -80,21 +84,15 @@ def main(args):
     split_valid = split["valid"]
     split_test = split["test"]
     
-    if not args.no_comma:
-        train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval())
-    else:
-        train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
-                                     has_comma=False)
+    train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
+                                 has_comma=(not args.no_comma))
     
     train_set.summary("> Train set")
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
-    if not args.no_comma:
-        valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval())
-    else:
-        valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                     has_comma=False)
+    valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
+                                 has_comma=(not args.no_comma))
    
     valid_set.summary("> Valid set")
     valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
@@ -125,11 +123,8 @@ def main(args):
                 metrics=metrics, proof_of_concept=args.proof_of_concept)
     
     print("=" * 100)
-    if not args.no_comma:
-        test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval())
-    else:
-        test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
-                                    has_comma=False)
+    test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
+                                has_comma=(not args.no_comma))
    
     test_set.summary("> Test set")
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
