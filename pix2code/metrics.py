@@ -48,6 +48,14 @@ def _tf(seconds) -> str:
         s = ("%d day%s, " % plural(td.days)) + s
     return s
     
+    
+def _format_named_meter(name: str, meter: AverageMeter, show_average: bool, precision: int = 4):
+    format_str = f"{{name}} {{value:.{precision}f}}"
+    if show_average:
+        format_str += f" ({{average:.{precision}f}})"
+    return format_str.format(name=name, value=meter.val, average=meter.smoothed_avg)
+
+
 class Metrics:
 
     def __init__(self, metrics: Dict[str, Metric], scorer: Type[Metric] = None):
@@ -111,12 +119,6 @@ class Metrics:
         scorer.update(hypotheses, references)
         return scorer.compute()
     
-    def _format_named_meter(name: str, meter: AverageMeter, show_average: bool, precision: int = 4):
-        format_str = f"{{name}} {{value:.{precision}f}}"
-        if show_average:
-            format_str += f" ({{average:.{precision}f}})"
-        return format_str.format(name=name, value=meter.val, average=meter.smoothed_avg)
-    
     def format(self, show_scores: bool = True, show_average: bool = True, 
                show_batch_time: bool = True, show_loss: bool = True) -> str:
         agg_metrics = []
@@ -132,7 +134,7 @@ class Metrics:
                 str_inline += f" / FIN {_tf(self.batch_time.avg * (self.batch_count - self.batch_time.count))}"
             agg_metrics.append(str_inline)
         if show_loss:
-            str_inline = self._format_named_meter("Loss", self.loss, show_average, precision=4)
+            str_inline = _format_named_meter("Loss", self.loss, show_average, precision=4)
             # str_inline = f"Loss {self.loss.val:.4f}"
             # if show_average:
             #     str_inline += f" ({self.loss.smoothed_avg:.4f})"
@@ -142,7 +144,7 @@ class Metrics:
             for k, v in self.losses.items():
                 if i % 5 == 0:
                     agg_metrics.append("\n")
-                str_inline = self._format_named_meter(k, v, show_average, precision=4)
+                str_inline = _format_named_meter(k, v, show_average, precision=4)
                 agg_metrics.append(str_inline)
                 i += 1
 
@@ -152,7 +154,7 @@ class Metrics:
             for i, metric in enumerate(self.metrics):
                 if i % 5 == 0:
                     agg_metrics.append("\n")
-                str_inline = self._format_named_meter(metric["name"], metric["meter"], show_average, precision=5)
+                str_inline = _format_named_meter(metric["name"], metric["meter"], show_average, precision=5)
                 # str_inline = f'{metric["name"]} {metric["meter"].val:.5f}'
                 # if show_average:
                 #     str_inline += f' ({metric["meter"].avg:.5f})'
