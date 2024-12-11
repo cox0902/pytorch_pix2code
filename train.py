@@ -16,7 +16,7 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, Detr
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, Detr
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -62,6 +62,8 @@ def main(args):
         model = Pix2Code(vocab_size=90)
     elif args.model == 'imagecaption':
         model = ImageCaption(vocab_size=90)
+    elif args.model in ['imagecaptionwithbox', 'icwb']:
+        model = ImageCaptionWithBox(vocab_size=90)
     elif args.model == 'detr':
         model = Detr(num_classes=90)
     else:
@@ -85,7 +87,7 @@ def main(args):
     split_test = split["test"]
 
     has_comma = (not args.no_comma)
-    has_rect = (args.model in ['detr'])
+    has_rect = (args.model in ['imagecaptionwithbox', 'icwb', 'detr'])
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
                                  has_comma=has_comma, has_rect=has_rect)

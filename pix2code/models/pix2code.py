@@ -134,4 +134,8 @@ class Pix2Code(nn.Module):
         target_packed, _ = sort_n_pack_padded_sequence(batch["code"][:, 1:].long(), context_length)
 
         loss = self.criterion(decoded, target_packed.data)
-        return loss, F.softmax(decoded, dim=-1), target_packed.data
+        return {
+            "loss": loss, 
+            "scores": F.softmax(decoded, dim=-1), 
+            "targets": target_packed.data
+        }

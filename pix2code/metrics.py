@@ -54,7 +54,8 @@ class Metrics:
         self.start_time = time.perf_counter()
         self.batch_time = AverageMeter()
         self.batch_count = 0
-        self.losses = AverageMeter(window_size=10)
+        self.loss = AverageMeter(window_size=10)
+        self.losses: Dict[str, AverageMeter] = {}
         self.metrics = [{
             'name': each_name,
             'meter': AverageMeter(),
@@ -62,21 +63,44 @@ class Metrics:
         } for each_name, each_scorer in metrics.items()]
         self.scorer: Type[Metric] = scorer
 
+        self.name_loss = "loss"
+        self.name_predicts = "scores"
+        self.name_targets = "targets"
+
     def reset(self, batch_count):
         self.batch_time.reset()
         self.start_time = time.perf_counter()
         self.batch_count = batch_count
+        self.loss.reset()  # 
+        for each in self.losses.values():
+            each.reset()
         for metric in self.metrics:
             metric['scorer'].reset()
             metric['meter'].reset()
 
-    def update(self, predicts, targets, loss = None):
-        if loss is not None:
-            self.losses.update(loss)
+    def update(self, outputs: Dict[str, Any] = {}):
+        #
+        predicts = outputs[self.name_predicts] if self.name_predicts in outputs else None
+        targets = outputs[self.name_targets] if self.name_targets in outputs else None
         if predicts is not None and targets is not None:
             for metric in self.metrics:
                 metric['scorer'].update(predicts, targets)
                 metric['meter'].update(metric['scorer'].compute())
+
+        #
+        loss = outputs[self.name_loss] if self.name_loss in outputs else None
+        if loss is not None:
+            if targets is not None:
+                self.loss.update(loss, targets.size(0))
+            else:
+                self.loss.update(loss)
+
+        for k, v in outputs.items():
+            if k.startswith(self.name_loss + "/"):
+                if k not in self.losses:
+                    self.losses[k] = AverageMeter()
+                self.losses[k].update(v)
+
         self.batch_time.update(time.perf_counter() - self.start_time)
         self.start_time = time.perf_counter()
 
@@ -86,6 +110,12 @@ class Metrics:
         scorer: Metric = self.scorer()
         scorer.update(hypotheses, references)
         return scorer.compute()
+    
+    def _format_named_meter(name: str, meter: AverageMeter, show_average: bool, precision: int = 4):
+        format_str = f"{{name}} {{value:.{precision}f}}"
+        if show_average:
+            format_str += f" ({{average:.{precision}f}})"
+        return format_str.format(name=name, value=meter.val, average=meter.smoothed_avg)
     
     def format(self, show_scores: bool = True, show_average: bool = True, 
                show_batch_time: bool = True, show_loss: bool = True) -> str:
@@ -102,19 +132,30 @@ class Metrics:
                 str_inline += f" / FIN {_tf(self.batch_time.avg * (self.batch_count - self.batch_time.count))}"
             agg_metrics.append(str_inline)
         if show_loss:
-            str_inline = f"Loss {self.losses.val:.4f}"
-            if show_average:
-                str_inline += f" ({self.losses.smoothed_avg:.4f})"
+            str_inline = self._format_named_meter("Loss", self.loss, show_average, precision=4)
+            # str_inline = f"Loss {self.loss.val:.4f}"
+            # if show_average:
+            #     str_inline += f" ({self.loss.smoothed_avg:.4f})"
             agg_metrics.append(str_inline)
-        # if show_batch_time or show_loss:
+
+            i = 1
+            for k, v in self.losses.items():
+                if i % 5 == 0:
+                    agg_metrics.append("\n")
+                str_inline = self._format_named_meter(k, v, show_average, precision=4)
+                agg_metrics.append(str_inline)
+                i += 1
+
+        # if show_batch_time or show_loss:8
         #     agg_metrics.append("\n")
         if show_scores:
             for i, metric in enumerate(self.metrics):
                 if i % 5 == 0:
                     agg_metrics.append("\n")
-                str_inline = f'{metric["name"]} {metric["meter"].val:.5f}'
-                if show_average:
-                    str_inline += f' ({metric["meter"].avg:.5f})'
+                str_inline = self._format_named_meter(metric["name"], metric["meter"], show_average, precision=5)
+                # str_inline = f'{metric["name"]} {metric["meter"].val:.5f}'
+                # if show_average:
+                #     str_inline += f' ({metric["meter"].avg:.5f})'
                 agg_metrics.append(str_inline)
         return '\t'.join(agg_metrics)
     

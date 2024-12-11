@@ -201,7 +201,7 @@ class Trainer:
         self.model.train()
         metrics.reset(len(data_loader))
 
-        total_loss = 0
+        # total_loss = 0
 
         print()
         for i, batch in enumerate(data_loader):
@@ -209,11 +209,11 @@ class Trainer:
             # targets = batch["target"]
 
             with autocast(enabled=self.scaler is not None):
-                loss, predicts, targets = self.model(batch)
+                outputs = self.model(batch)
 
             self.optimizer.zero_grad()
             if self.scaler is not None:
-                self.scaler.scale(loss).backward()
+                self.scaler.scale(outputs["loss"]).backward()
 
                 if self.grad_clip is not None:
                     self.scaler.unscale_(self.optimizer)
@@ -222,7 +222,7 @@ class Trainer:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                loss.backward()
+                outputs["loss"].backward()
 
                 if self.grad_clip is not None:
                     self.grad_clip_fn(self.model.parameters(), self.grad_clip)
@@ -234,8 +234,8 @@ class Trainer:
                 if epoch < self.warmup_epochs:
                     self.ema_model.n_averaged.fill_(0)
 
-            metrics.update(predicts=predicts, targets=targets, loss=loss.item())
-            total_loss += loss.item()
+            metrics.update(outputs)
+            # total_loss += outputs["loss"].item()
 
             if i % self.print_freq == 0:
                 print(f"Epoch [{epoch}][{i + 1}/{len(data_loader)}]\t{metrics.format()}")
@@ -244,7 +244,8 @@ class Trainer:
                 break
 
         print(f"Epoch [{epoch}][{i + 1}/{len(data_loader)}]\t{metrics.format()}")
-        return total_loss
+        # return total_loss
+        return metrics.loss.sum
         
     def valid(self, data_loader: DataLoader, metrics: Metrics, proof_of_concept: bool = False) -> Tuple[float, float]:
         model = self.get_model()
@@ -260,29 +261,30 @@ class Trainer:
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
                 # targets = batch["target"]
-                loss, predicts, targets = model(batch)
+                outputs = model(batch)
 
-                metrics.update(predicts=predicts, targets=targets, loss=loss.item())
-                total_loss += loss.item() * len(targets)
+                metrics.update(outputs)
+                # total_loss += outputs["loss"].item() * len(outputs["targets"])
 
                 if i % self.print_freq == 0:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
-                references.extend(targets)
-                hypotheses.extend(predicts)
+                references.extend(outputs["targets"])
+                hypotheses.extend(outputs["scores"])
 
                 if proof_of_concept:
                     break
 
             print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
+            total_loss = metrics.loss.avg
 
             hypotheses = torch.stack(hypotheses)
             references = torch.stack(references)
             metrics.reset(len(data_loader))
-            metrics.update(predicts=hypotheses, targets=references)
+            metrics.update({ "scores": hypotheses, "targets": references })
             print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
-        return metrics.compute(hypotheses, references), total_loss / len(data_loader.dataset)
+        return metrics.compute(hypotheses, references), total_loss
     
     def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, 
              proof_of_concept: bool = False):
@@ -310,21 +312,21 @@ class Trainer:
                     else:
                         handler = getattr(model.resnet, hook).register_forward_hook(fn_hook)
 
-                    _, predicts, targets = model(batch)
+                    outputs = model(batch)
                     handler.remove()
 
                     # print(activation[hook].shape)
                     activations.extend(activation[hook].squeeze().cpu().numpy())  # !! TODO: add n to squeeze
                 else:
-                    _, predicts, targets = model(batch)
+                    outputs = model(batch)
                
-                metrics.update(None, None)  # 
+                metrics.update()  # 
 
                 if i % self.print_freq == 0:
                     print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
 
-                references.extend(targets)
-                hypotheses.extend(predicts)
+                references.extend(outputs["targets"])
+                hypotheses.extend(outputs["scores"])
 
                 if proof_of_concept:
                     break
@@ -334,7 +336,7 @@ class Trainer:
             hypotheses = torch.stack(hypotheses)
             references = torch.stack(references)
             metrics.reset(len(data_loader))
-            metrics.update(predicts=hypotheses, targets=references)
+            metrics.update({ "scores": hypotheses, "targets": references })
             print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
             metrics.compute(hypotheses, references)
