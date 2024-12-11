@@ -249,8 +249,8 @@ class ImageCaptionWithBox(nn.Module):
         caplens = batch["code_len"]
         
         boxs = batch["rect"]
-        equs = batch["equal"]
-        igns = batch["ignore"]
+        equs = batch["equal"].float()
+        igns = batch["ignore"].float()
 
         # Forward prop.
         imgs = self.encoder(imgs)
