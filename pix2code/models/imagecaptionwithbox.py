@@ -249,8 +249,8 @@ class ImageCaptionWithBox(nn.Module):
         caplens = batch["code_len"]
         
         boxs = batch["rect"]
-        equs = batch["equal"].long()
-        igns = batch["ignore"].long()
+        equs = batch["equal"]
+        igns = batch["ignore"]
 
         # Forward prop.
         imgs = self.encoder(imgs)
@@ -290,7 +290,7 @@ class ImageCaptionWithBox(nn.Module):
         preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
         truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
-        box_masks = (1 - truth_equ) * (1 - truth_ign)
+        box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
 
         preds_box = preds_box[box_masks]
         truth_box = truth_box[box_masks]
