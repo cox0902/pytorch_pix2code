@@ -10,9 +10,3 @@ __all__ = [
     ImageCaptionWithBox,
     Detr
 ]
-
-# fix torch 2.4.0 warning
-
-import torch
-
-torch.serialization.add_safe_globals(__all__)

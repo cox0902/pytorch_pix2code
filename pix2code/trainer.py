@@ -13,8 +13,6 @@ from torch.optim.lr_scheduler import LRScheduler
 import torch.utils
 from torch.utils.data import DataLoader
 
-torch.serialization.add_safe_globals([set])
-
 from .metrics import Metrics, EmptyMetrics
 from .utils import get_rng_state
 
@@ -140,7 +138,7 @@ class Trainer:
                 save_file = 'checkpoint.pth.tar'
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        saved = torch.load(save_file, map_location=device, weights_only=True)  # torch 2.4.0 warning
+        saved = torch.load(save_file, map_location=device, weights_only=False)  # torch 2.4.0 warning
 
         model: nn.Module = saved['model']
         is_ema = 'ema_model' in saved
