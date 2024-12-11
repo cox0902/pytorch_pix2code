@@ -6,7 +6,8 @@ import numpy as np
 import torch
 from torch import nn
 from torch import optim
-from torch.cuda.amp import autocast, GradScaler
+# from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
+from torch.amp import autocast, GradScaler
 from torch.optim.swa_utils import AveragedModel
 from torch.optim.lr_scheduler import LRScheduler
 import torch.utils
@@ -99,7 +100,7 @@ class Trainer:
         if is_ema:
             self.ema_model = ExponentialMovingAverage(self.model)
 
-        self.scaler = GradScaler() if use_amp else None
+        self.scaler = GradScaler("cuda") if use_amp else None
 
         self.optimizer = optimizer
 
@@ -137,7 +138,7 @@ class Trainer:
                 save_file = 'checkpoint.pth.tar'
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        saved = torch.load(save_file, map_location=device)
+        saved = torch.load(save_file, map_location=device, weights_only=True)  # torch 2.4.0 warning
 
         model: nn.Module = saved['model']
         is_ema = 'ema_model' in saved
@@ -208,7 +209,7 @@ class Trainer:
             batch = self.to_device(batch)
             # targets = batch["target"]
 
-            with autocast(enabled=self.scaler is not None):
+            with autocast("cuda", enabled=self.scaler is not None):
                 outputs = self.model(batch)
 
             self.optimizer.zero_grad()
@@ -409,7 +410,7 @@ class Trainer:
 
             recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
             
-            if epoch >= self.warmup_epochs:
+            if epoch >= self.warmup_epochs or proof_of_concept:
                 is_best = recent_score > best_score
                 best_score = max(recent_score, best_score)
 
