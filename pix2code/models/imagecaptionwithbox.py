@@ -295,6 +295,9 @@ class ImageCaptionWithBox(nn.Module):
         preds_box = preds_box[box_masks]
         truth_box = truth_box[box_masks]
 
+        preds_box = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
+        truth_box = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
+
         loss_box = self.criterion_box(preds_box, truth_box, reduction="mean")
 
         #
