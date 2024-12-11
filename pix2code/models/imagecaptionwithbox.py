@@ -240,8 +240,8 @@ class ImageCaptionWithBox(nn.Module):
                                             dropout=0.5)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_box = torchvision.ops.generalized_box_iou_loss
-        self.criterion_equ = nn.CrossEntropyLoss()
-        self.criterion_ign = nn.CrossEntropyLoss()
+        self.criterion_equ = nn.BCEWithLogitsLoss()
+        self.criterion_ign = nn.BCEWithLogitsLoss()
         
     def forward(self, batch):
         imgs = batch["image"]
