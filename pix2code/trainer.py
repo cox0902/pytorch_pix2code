@@ -13,6 +13,8 @@ from torch.optim.lr_scheduler import LRScheduler
 import torch.utils
 from torch.utils.data import DataLoader
 
+torch.serialization.add_safe_globals([set])
+
 from .metrics import Metrics, EmptyMetrics
 from .utils import get_rng_state
 
