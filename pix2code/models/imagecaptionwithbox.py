@@ -278,13 +278,13 @@ class ImageCaptionWithBox(nn.Module):
         preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
         truth_equ = nn.utils.rnn.pack_padded_sequence(truth_equ, decode_lengths, batch_first=True).data
 
-        loss_equ = self.criterion_equ(preds_equ, truth_equ)
+        loss_equ = self.criterion_equ(preds_equ.squeeze(), truth_equ)
 
         #
         preds_ign = nn.utils.rnn.pack_padded_sequence(preds_ign, decode_lengths, batch_first=True).data
         truth_ign = nn.utils.rnn.pack_padded_sequence(truth_ign, decode_lengths, batch_first=True).data
 
-        loss_ign = self.criterion_ign(preds_ign, truth_ign)
+        loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
 
         #
         preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
