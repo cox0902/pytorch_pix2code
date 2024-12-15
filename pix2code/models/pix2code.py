@@ -110,7 +110,7 @@ class Decoder(nn.Module):
         y_packed, _ = self.rnn(x_packed, h)  # y_packed.data -> [-1, hidden_size]
 
         y_packed = self.fc(y_packed.data)
-        return y_packed  # softmax is omit for CrossEntropyLoss  
+        return y_packed, h  # softmax is omit for CrossEntropyLoss  
     
 
 class Pix2Code(nn.Module):
@@ -129,7 +129,7 @@ class Pix2Code(nn.Module):
         encoded_image = self.image_encoder(batch["image"])
         context_length = batch["code_len"] - 1
         encoded_context = self.context_encoder(context, context_length)
-        decoded = self.decoder(encoded_image, encoded_context, context_length)  # -> [-1, vocab_size]
+        decoded, _ = self.decoder(encoded_image, encoded_context, context_length)  # -> [-1, vocab_size]
 
         target_packed, _ = sort_n_pack_padded_sequence(batch["code"][:, 1:].long(), context_length)
 
