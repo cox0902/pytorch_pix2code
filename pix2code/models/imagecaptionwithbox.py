@@ -118,8 +118,8 @@ class DecoderWithAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.fc_cls = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.fc_box = nn.Linear(decoder_dim, 4)  #
-        self.fc_equ = nn.Linear(decoder_dim, 1)  #
-        self.fc_ign = nn.Linear(decoder_dim, 1)  #
+        # self.fc_equ = nn.Linear(decoder_dim, 1)  #
+        # self.fc_ign = nn.Linear(decoder_dim, 1)  #
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -131,10 +131,10 @@ class DecoderWithAttention(nn.Module):
         self.fc_cls.weight.data.uniform_(-0.1, 0.1)
         self.fc_box.bias.data.fill_(0)
         self.fc_box.weight.data.uniform_(-0.1, 0.1)
-        self.fc_equ.bias.data.fill_(0)
-        self.fc_equ.weight.data.uniform_(-0.1, 0.1)
-        self.fc_ign.bias.data.fill_(0)
-        self.fc_ign.weight.data.uniform_(-0.1, 0.1)
+        # self.fc_equ.bias.data.fill_(0)
+        # self.fc_equ.weight.data.uniform_(-0.1, 0.1)
+        # self.fc_ign.bias.data.fill_(0)
+        # self.fc_ign.weight.data.uniform_(-0.1, 0.1)
 
     def load_pretrained_embeddings(self, embeddings):
         """
@@ -201,8 +201,8 @@ class DecoderWithAttention(nn.Module):
         # Create tensors to hold word predicion scores and alphas
         preds_cls = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
         preds_box = torch.zeros(batch_size, max(decode_lengths), 4).to(encoder_out.device)
-        preds_equ = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
-        preds_ign = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
+        # preds_equ = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
+        # preds_ign = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
         # At each time-step, decode by
@@ -220,11 +220,12 @@ class DecoderWithAttention(nn.Module):
             h = self.dropout(h)
             preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # (batch_size_t, vocab_size)
             preds_box[:batch_size_t, t, :] = self.fc_box(h).sigmoid()
-            preds_equ[:batch_size_t, t, :] = self.fc_equ(h)
-            preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
+            # preds_equ[:batch_size_t, t, :] = self.fc_equ(h)
+            # preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
             alphas[:batch_size_t, t, :] = alpha
 
-        return preds_cls, preds_box, preds_equ, preds_ign, encoded_captions, decode_lengths, alphas, sort_ind
+        # return preds_cls, preds_box, preds_equ, preds_ign, encoded_captions, decode_lengths, alphas, sort_ind
+        return preds_cls, preds_box, encoded_captions, decode_lengths, alphas, sort_ind
 
 
 class ImageCaptionWithBox(nn.Module):
@@ -249,19 +250,20 @@ class ImageCaptionWithBox(nn.Module):
         caplens = batch["code_len"]
         
         boxs = batch["rect"]
-        equs = batch["equal"].float()
-        igns = batch["ignore"].float()
+        # equs = batch["equal"].float()
+        # igns = batch["ignore"].float()
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
-            self.decoder(imgs, caps, caplens)
+        # preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
+        #     self.decoder(imgs, caps, caplens)
+        preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
         truth_cls = caps_sorted[:, 1:]
         truth_box = boxs[sort_ind, 1:]
-        truth_equ = equs[sort_ind, 1:]
-        truth_ign = igns[sort_ind, 1:]
+        # truth_equ = equs[sort_ind, 1:]
+        # truth_ign = igns[sort_ind, 1:]
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
@@ -275,22 +277,23 @@ class ImageCaptionWithBox(nn.Module):
         loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
 
         #
-        preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
-        truth_equ = nn.utils.rnn.pack_padded_sequence(truth_equ, decode_lengths, batch_first=True).data
+        # preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
+        # truth_equ = nn.utils.rnn.pack_padded_sequence(truth_equ, decode_lengths, batch_first=True).data
 
-        loss_equ = self.criterion_equ(preds_equ.squeeze(), truth_equ)
+        # loss_equ = self.criterion_equ(preds_equ.squeeze(), truth_equ)
 
         #
-        preds_ign = nn.utils.rnn.pack_padded_sequence(preds_ign, decode_lengths, batch_first=True).data
-        truth_ign = nn.utils.rnn.pack_padded_sequence(truth_ign, decode_lengths, batch_first=True).data
+        # preds_ign = nn.utils.rnn.pack_padded_sequence(preds_ign, decode_lengths, batch_first=True).data
+        # truth_ign = nn.utils.rnn.pack_padded_sequence(truth_ign, decode_lengths, batch_first=True).data
 
-        loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
+        # loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
 
         #
         preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
         truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
-        box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
+        # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
+        box_masks = (truth_cls > 7)
 
         preds_box = preds_box[box_masks]
         truth_box = truth_box[box_masks]
@@ -301,13 +304,14 @@ class ImageCaptionWithBox(nn.Module):
         loss_box = self.criterion_box(preds_box, truth_box, reduction="mean")
 
         #
-        loss = loss_cls + loss_equ + loss_ign + loss_box
+        # loss = loss_cls + loss_equ + loss_ign + loss_box
+        loss = loss_cls + loss_box
 
         return {
             "loss": loss, 
             "loss/cls": loss_cls,
-            "loss/equ": loss_equ,
-            "loss/ign": loss_ign,
+            # "loss/equ": loss_equ,
+            # "loss/ign": loss_ign,
             "loss/box": loss_box,
             "scores": preds_cls,  
             "targets": truth_cls

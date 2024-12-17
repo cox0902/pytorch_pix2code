@@ -22,8 +22,8 @@ def box_cxcywh_to_xyxy(x):
 
 class ImageCodeDataset(Dataset):
 
-    def __init__(self, image_path: str, code_path: str, split: Optional[Any],
-                 transform: Optional[Any] = None, has_comma: bool = True, has_rect: bool = False):
+    def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
+                 has_comma: bool = True, has_rect: bool = False):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
@@ -85,23 +85,36 @@ class ImageCodeDataset(Dataset):
                 "code_len": code_len,
             }
         if self.has_rect:
-            ignore = np.zeros_like(code)
-            equal = np.zeros_like(code)
+            # ignore = np.zeros_like(code)
+            # equal = np.zeros_like(code)
+            # rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
+            # for i, each_id in enumerate(self.ids[self.__idx(index)]):
+            #     if each_id <= 0:
+            #         ignore[i] = 1
+            #         continue
+            #     loc = np.where(np.logical_and(
+            #         self.labels[:, 0] == self.__idx(index),
+            #         self.labels[:, 1] == each_id
+            #     ))
+            #     if len(loc[0]) != 1:
+            #         equal[i] = 1
+            #         continue
+            #     rects[i] = self.rects[loc[0]]
+            # item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+            # item["equal"] = equal
+            # item["ignore"] = ignore
             rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
-            for i, each_id in enumerate(self.ids[self.__idx(index)]):
-                if each_id <= 0:
-                    ignore[i] = 1
+            ids = self.ids[self.__idx(index)]
+            ivs = self.codes[self.__idx(index)]
+            for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
+                if each_iv <= 7:
                     continue
                 loc = np.where(np.logical_and(
                     self.labels[:, 0] == self.__idx(index),
                     self.labels[:, 1] == each_id
                 ))
-                if len(loc[0]) != 1:
-                    equal[i] = 1
-                    continue
+                assert len(loc[0]) == 1
                 rects[i] = self.rects[loc[0]]
             item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
-            item["equal"] = equal
-            item["ignore"] = ignore
         return item
     

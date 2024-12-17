@@ -210,12 +210,41 @@ class DecoderWithAttention(nn.Module):
             alphas[:batch_size_t, t, :] = alpha
 
         return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+    
+    def predict(self, encoder_out, captions, hiddens):
+        batch_size = encoder_out.size(0)
+        encoder_dim = encoder_out.size(-1)
+
+        # Flatten image
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+
+        # Embedding
+        embeddings = self.embedding(captions)  # (batch_size, 1, embed_dim)
+        # print(embeddings.shape)
+
+        # Initialize LSTM state
+        if hiddens is None:
+            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+        else:
+            h, c = hiddens
+        # print("h, c:", h.shape, c.shape)
+
+        attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+        gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
+        attention_weighted_encoding = gate * attention_weighted_encoding
+        h, c = self.decode_step(
+            torch.cat([embeddings[:, -1, :], attention_weighted_encoding], dim=1),
+            (h, c))  # (batch_size_t, decoder_dim)
+        preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+
+        return preds, alpha, (h, c)
 
 
 class ImageCaption(nn.Module):
 
     def __init__(self, vocab_size: int):
         super().__init__()
+        self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder()
         self.decoder = DecoderWithAttention(attention_dim=512,
@@ -253,3 +282,61 @@ class ImageCaption(nn.Module):
             "scores": scores, 
             "targets": targets
         }
+    
+    # def predict(self, batch, hiddens = None):
+    #     imgs = batch["image"]
+    #     caps = batch["code"].long()
+
+    #     imgs = self.encoder(imgs)
+
+    #     preds, _, hiddens = self.decoder.predict(imgs, caps, hiddens)
+
+    #     return {
+    #         "scores": preds,
+    #         "hiddens": hiddens
+    #     }
+    
+    def predict(self, images, max_seq_len: int, sampler):
+        self.eval()
+
+        batch_size = images.size(0)
+        # print("batch_size:", batch_size)
+
+        encoder_out = self.encoder(images)
+        encoder_dim = encoder_out.size(-1)
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+
+        caps = torch.zeros((batch_size, max_seq_len), dtype=torch.long).to(images.device)
+        caps[:, 0] = 3  # <start>
+
+        h, c = self.decoder.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+
+        mask = torch.ones((batch_size, ), dtype=torch.bool)
+        # print("mask:", mask.shape)
+
+        for k in range(1, max_seq_len):
+            if mask.sum() == 0:
+                break
+
+            selected_outs = encoder_out[mask]
+            selected_caps = caps[mask]
+            selected_h = h[mask]
+            selected_c = c[mask]
+
+            # print("encoder_out:", encoder_out.shape)
+            # print("selected_outs:", selected_outs.shape)
+            # print("selected_h:", selected_h.shape)
+            # print("selected_c:", selected_c.shape)
+
+            preds, _, hiddens = self.decoder.predict(selected_outs, selected_caps, (selected_h, selected_c))
+
+            outs = torch.argmax(torch.softmax(preds, dim=-1), dim=-1)
+            caps[mask, k] = outs
+
+            wh = torch.where(torch.logical_or(caps[:, k] == 0, caps[:, k] == 4))  # <pad> or <end>
+            mask[wh] = 0
+
+            h[mask] = hiddens[0]
+            c[mask] = hiddens[1]
+
+        return caps
