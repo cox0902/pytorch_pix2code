@@ -23,12 +23,14 @@ def box_cxcywh_to_xyxy(x):
 class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
+                 label_trans = None,
                  has_comma: bool = True, has_rect: bool = False):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
         self.split = split
         self.transform = transform
+        self.label_trans = label_trans
         self.has_comma = has_comma
         self.has_rect = has_rect
         
@@ -66,6 +68,11 @@ class ImageCodeDataset(Dataset):
             image = self.transform(image)
 
         code = self.codes[self.__idx(index)]
+
+        if self.label_trans is not None:
+            for i in range(len(code)):
+                code[i] = self.label_trans[code[i]][-1]
+
         if not self.has_comma:
             code_wo_comma = np.zeros_like(code)
             code = code[code != 7]
