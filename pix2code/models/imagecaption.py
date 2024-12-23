@@ -212,21 +212,22 @@ class DecoderWithAttention(nn.Module):
         return predictions, encoded_captions, decode_lengths, alphas, sort_ind
     
     def predict(self, encoder_out, captions, hiddens):
-        batch_size = encoder_out.size(0)
-        encoder_dim = encoder_out.size(-1)
+        # batch_size = encoder_out.size(0)
+        # encoder_dim = encoder_out.size(-1)
 
         # Flatten image
-        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        # encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
 
         # Embedding
         embeddings = self.embedding(captions)  # (batch_size, 1, embed_dim)
         # print(embeddings.shape)
 
         # Initialize LSTM state
-        if hiddens is None:
-            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        else:
-            h, c = hiddens
+        # if hiddens is None:
+        #     h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+        # else:
+        #     h, c = hiddens
+        h, c = hiddens
         # print("h, c:", h.shape, c.shape)
 
         attention_weighted_encoding, alpha = self.attention(encoder_out, h)

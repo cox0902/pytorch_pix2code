@@ -6,8 +6,12 @@ import numpy as np
 import torch
 from torch import nn
 from torch import optim
-# from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
-from torch.amp import autocast, GradScaler
+
+if torch.__version__ >= "2.4":
+    from torch.amp import autocast, GradScaler
+else:
+    from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
+
 from torch.optim.swa_utils import AveragedModel
 from torch.optim.lr_scheduler import LRScheduler
 import torch.utils
@@ -408,50 +412,52 @@ class Trainer:
 
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
 
-            recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
-            
-            if epoch >= self.warmup_epochs or proof_of_concept:
-                is_best = recent_score > best_score
-                best_score = max(recent_score, best_score)
+            if valid_loader is not None:
+                recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
+                
+                if epoch >= self.warmup_epochs or proof_of_concept:
+                    is_best = recent_score > best_score
+                    best_score = max(recent_score, best_score)
 
-                if not is_best:
-                    epochs_since_improvement += 1
-                    print(f"\nEpochs since last improvement: {epochs_since_improvement} ({best_score})\n")  # [OK]
-                else:
-                    epochs_since_improvement = 0
+                    if not is_best:
+                        epochs_since_improvement += 1
+                        print(f"\nEpochs since last improvement: {epochs_since_improvement} ({best_score})\n")  # [OK]
+                    else:
+                        epochs_since_improvement = 0
 
+                    # save checkpoint
+                    self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
+                                        score=recent_score, is_best=is_best, 
+                                        save_checkpoint=save_checkpoint)
+            else:
                 # save checkpoint
                 self.save_checkpoint(epoch=epoch, epochs_since_improvement=epochs_since_improvement, 
-                                    score=recent_score, is_best=is_best, 
-                                    save_checkpoint=save_checkpoint)
-            
+                                    score=0, is_best=False, save_checkpoint=save_checkpoint)
+                
             if proof_of_concept:
                 break
 
-    def predict(self, data_loader: DataLoader, proof_of_concept: bool = False):
+    def predict(self, data_loader: DataLoader, max_len: int, proof_of_concept: bool = False):
         model = self.get_model()
         model.eval()
 
         metrics = EmptyMetrics()
         metrics.reset(len(data_loader))
 
-        predicts_collected = {}
+        predicts_collected = []
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
 
                 if self.ema_model is not None:
-                    predicts = model.module.predict(batch)
+                    predicts = model.module.predict(batch["image"], max_len, None)
                 else:
-                    predicts = model.predict(batch)
+                    predicts = model.predict(batch["image"], max_len, None)
 
-                for k, v in predicts.items():
-                    if k not in predicts_collected:
-                        predicts_collected[k] = []
-                    predicts_collected[k].extend(v.cpu())
+                predicts_collected.extend(predicts.cpu())
 
-                metrics.update(None, None)  # 
+                metrics.update()  # 
 
                 if i % self.print_freq == 0:
                     print(f'Predict [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')

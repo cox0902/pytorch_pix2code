@@ -81,10 +81,13 @@ def main(args):
     else:
         optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
-    split = np.load(args.split_path)
-    split_train = split["train"]
-    split_valid = split["valid"]
-    split_test = split["test"]
+    if args.split_path is not None:
+        split = np.load(args.split_path)
+        split_train = split["train"]
+        split_valid = split["valid"]
+        split_test = split["test"]
+    else:
+        split_train, split_valid, split_test = None, None, None
 
     has_comma = (not args.no_comma)
     has_rect = (args.model in ['imagecaptionwithbox', 'icwb', 'detr'])
@@ -96,11 +99,14 @@ def main(args):
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
-    valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                 has_comma=has_comma, has_rect=has_rect)
-   
-    valid_set.summary("> Valid set")
-    valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+    if split_valid is not None:
+        valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
+                                    has_comma=has_comma, has_rect=has_rect)
+    
+        valid_set.summary("> Valid set")
+        valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+    else:
+        valid_loader = None
     
     trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
@@ -127,16 +133,16 @@ def main(args):
     trainer.fit(epochs=args.epochs, train_loader=train_loader, valid_loader=valid_loader, 
                 metrics=metrics, proof_of_concept=args.proof_of_concept)
     
-    print("=" * 100)
-    test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
-                                has_comma=has_comma, has_rect=has_rect)
-   
-    test_set.summary("> Test set")
-    test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
+    if split_test is not None:
+        print("=" * 100)
+        test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
+                                    has_comma=has_comma, has_rect=has_rect)
     
-                         
-    trainer = Trainer.load_checkpoint("./BEST.pth.tar")
-    _ = trainer.test(data_loader=test_loader, metrics=metrics, proof_of_concept=args.proof_of_concept)
+        test_set.summary("> Test set")
+        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
+        
+        trainer = Trainer.load_checkpoint("./BEST.pth.tar")
+        _ = trainer.test(data_loader=test_loader, metrics=metrics, proof_of_concept=args.proof_of_concept)
 
 
 if __name__ == "__main__":
