@@ -8,11 +8,11 @@ class Encoder(nn.Module):
     Encoder.
     """
 
-    def __init__(self, encoded_image_size=14):
+    def __init__(self, resnet, encoded_image_size=14):
         super(Encoder, self).__init__()
         self.enc_image_size = encoded_image_size
 
-        resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)  # pretrained ImageNet ResNet-101
+        # resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)  # pretrained ImageNet ResNet-101
 
         # Remove linear and pool layers (since we're not doing classification)
         modules = list(resnet.children())[:-2]
@@ -219,7 +219,7 @@ class DecoderWithAttention(nn.Module):
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             h = self.dropout(h)
             preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # (batch_size_t, vocab_size)
-            preds_box[:batch_size_t, t, :] = self.fc_box(h).sigmoid()
+            preds_box[:batch_size_t, t, :] = self.fc_box(alpha).sigmoid()
             # preds_equ[:batch_size_t, t, :] = self.fc_equ(h)
             # preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
             alphas[:batch_size_t, t, :] = alpha
@@ -230,10 +230,10 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithBox(nn.Module):
 
-    def __init__(self, vocab_size: int):
+    def __init__(self, resnet, vocab_size: int):
         super().__init__()
         self.alpha_c = 1.
-        self.encoder = Encoder()
+        self.encoder = Encoder(resnet)
         self.decoder = DecoderWithAttention(attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,

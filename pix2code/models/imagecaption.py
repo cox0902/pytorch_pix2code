@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision
+import transformers
 
 
 class Encoder(nn.Module):
@@ -211,7 +212,7 @@ class DecoderWithAttention(nn.Module):
 
         return predictions, encoded_captions, decode_lengths, alphas, sort_ind
     
-    def predict(self, encoder_out, captions, hiddens):
+    def predict(self, encoder_out, captions, hiddens = None):
         # batch_size = encoder_out.size(0)
         # encoder_dim = encoder_out.size(-1)
 
@@ -223,20 +224,30 @@ class DecoderWithAttention(nn.Module):
         # print(embeddings.shape)
 
         # Initialize LSTM state
-        # if hiddens is None:
-        #     h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        # else:
-        #     h, c = hiddens
-        h, c = hiddens
-        # print("h, c:", h.shape, c.shape)
+        if hiddens is None:
+            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
 
-        attention_weighted_encoding, alpha = self.attention(encoder_out, h)
-        gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
-        attention_weighted_encoding = gate * attention_weighted_encoding
-        h, c = self.decode_step(
-            torch.cat([embeddings[:, -1, :], attention_weighted_encoding], dim=1),
-            (h, c))  # (batch_size_t, decoder_dim)
-        preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            decode_length = captions.size(-1)
+
+            for t in range(decode_length):
+                attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+                gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
+                attention_weighted_encoding = gate * attention_weighted_encoding
+                h, c = self.decode_step(
+                    torch.cat([embeddings[:, t, :], attention_weighted_encoding], dim=1),
+                    (h, c))  # (batch_size_t, decoder_dim)
+                preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+        else:
+            h, c = hiddens
+            # print("h, c:", h.shape, c.shape)
+
+            attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+            gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
+            attention_weighted_encoding = gate * attention_weighted_encoding
+            h, c = self.decode_step(
+                torch.cat([embeddings[:, -1, :], attention_weighted_encoding], dim=1),
+                (h, c))  # (batch_size_t, decoder_dim)
+            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
 
         return preds, alpha, (h, c)
 
@@ -245,6 +256,7 @@ class ImageCaption(nn.Module):
 
     def __init__(self, vocab_size: int):
         super().__init__()
+        self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder()
@@ -297,7 +309,7 @@ class ImageCaption(nn.Module):
     #         "hiddens": hiddens
     #     }
     
-    def predict(self, images, max_seq_len: int, sampler):
+    def predict(self, images, max_seq_len: int):
         self.eval()
 
         batch_size = images.size(0)
@@ -334,10 +346,79 @@ class ImageCaption(nn.Module):
             outs = torch.argmax(torch.softmax(preds, dim=-1), dim=-1)
             caps[mask, k] = outs
 
-            wh = torch.where(torch.logical_or(caps[:, k] == 0, caps[:, k] == 4))  # <pad> or <end>
-            mask[wh] = 0
-
             h[mask] = hiddens[0]
             c[mask] = hiddens[1]
 
+            wh = torch.where(torch.logical_or(caps[:, k] == 0, caps[:, k] == 4))  # <pad> or <end>
+            mask[wh] = 0
+
         return caps
+
+    def predict_beam(self, images, max_seq_len: int, beam_width: int):
+        if self.proof_of_concept:
+            print("- beam_width:", beam_width)
+
+        self.eval()
+        
+        batch_size = images.size(0)
+
+        # print("batch_size:", batch_size)
+
+        encoder_out = self.encoder(images)
+        encoder_dim = encoder_out.size(-1)
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        encoder_out = encoder_out.repeat_interleave(beam_width, dim=0)  # (batch_size * beam_width, num_pixels, encoder_dim)
+
+        h, c = self.decoder.init_hidden_state(encoder_out)  # (batch_size * beam_width, decoder_dim)
+
+        beam_scorer = transformers.generation.BeamSearchScorer(batch_size, beam_width, images.device, 
+                                                               max_length=max_seq_len)
+
+        beam_scores = torch.zeros((batch_size, beam_width), dtype=torch.float, device=images.device)
+        beam_scores = beam_scores.view(-1)  # (batch_size * beam_width, )
+
+        input_ids = torch.full((batch_size * beam_width, 1), 3, dtype=torch.long, device=images.device)
+            
+        cur_len = 1
+        while cur_len < max_seq_len - 1:
+            preds, _, (h, c) = self.decoder.predict(encoder_out, input_ids, (h, c))
+            scores = torch.nn.functional.log_softmax(preds, dim=-1)  # (batch_size * beam_width, vocab_size)
+
+            next_scores = scores + beam_scores[:, None].expand_as(scores)
+            next_scores = next_scores.view(batch_size, beam_width * self.vocab_size)
+
+            next_scores, next_tokens = torch.topk(next_scores, 2 * beam_width, dim=1, largest=True, sorted=True)
+            next_tokens = next_tokens % self.vocab_size
+            next_indices = torch.div(next_tokens, self.vocab_size, rounding_mode="floor")
+
+            # print(next_scores, next_tokens, next_indices)
+
+            r = beam_scorer.process(input_ids, next_scores, next_tokens, next_indices, 
+                                    pad_token_id=0, eos_token_id=4)
+            # print(r)
+
+            beam_scores = r["next_beam_scores"]
+            beam_next_tokens = r["next_beam_tokens"]
+            beam_idx = r["next_beam_indices"]
+
+            input_ids = torch.cat([input_ids[beam_idx, :], beam_next_tokens.unsqueeze(-1)], dim=-1)
+            h = h[beam_idx, :]
+            c = c[beam_idx, :]
+
+            if beam_scorer.is_done:
+                break
+
+            cur_len += 1
+
+        sequence_outputs = beam_scorer.finalize(
+            input_ids,
+            beam_scores,
+            next_tokens,
+            next_indices,
+            pad_token_id=0,
+            eos_token_id=4,
+            max_length=max_seq_len
+        )
+
+        return sequence_outputs["sequences"]
+    

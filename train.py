@@ -24,6 +24,7 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--proof-of-concept", action="store_true")
     parser.add_argument("--model", type=str)
+    parser.add_argument("--model-resnet", type=str)
     parser.add_argument("--compat", action="store_true")
     parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
@@ -63,7 +64,9 @@ def main(args):
     elif args.model == 'imagecaption':
         model = ImageCaption(vocab_size=90)
     elif args.model in ['imagecaptionwithbox', 'icwb']:
-        model = ImageCaptionWithBox(vocab_size=90)
+        from dt.trainer import Trainer as DtTrainer
+        t = DtTrainer.load_checkpoint(args.model_resnet)
+        model = ImageCaptionWithBox(t.get_inner_model(), vocab_size=90)
     elif args.model == 'detr':
         model = Detr(num_classes=90)
     else:

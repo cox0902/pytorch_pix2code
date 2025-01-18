@@ -164,6 +164,7 @@ cython_debug/
 unit_test/
 *.sh
 datasets/
+temp/
 *.ipynb
 .DS_Store
 *.npy

@@ -11,6 +11,8 @@ if torch.__version__ >= "2.4":
     from torch.amp import autocast, GradScaler
 else:
     from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
+    torch.amp.autocast = autocast
+    torch.amp.GradScaler = GradScaler
 
 from torch.optim.swa_utils import AveragedModel
 from torch.optim.lr_scheduler import LRScheduler
@@ -437,25 +439,36 @@ class Trainer:
             if proof_of_concept:
                 break
 
-    def predict(self, data_loader: DataLoader, max_len: int, proof_of_concept: bool = False):
+    def predict(self, data_loader: DataLoader, max_len: int, sampler: str = "greedy",
+                proof_of_concept: bool = False, **kws_sampler):
+        if proof_of_concept:
+            print("sampler:", sampler)
+
         model = self.get_model()
+        if self.ema_model is not None:
+            model = model.module
         model.eval()
+        model.proof_of_concept = proof_of_concept
 
         metrics = EmptyMetrics()
         metrics.reset(len(data_loader))
 
         predicts_collected = []
+        targets_collected = []
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
 
-                if self.ema_model is not None:
-                    predicts = model.module.predict(batch["image"], max_len, None)
+                if sampler == "beam":
+                    predicts = model.predict_beam(batch["image"], max_len, **kws_sampler)
                 else:
-                    predicts = model.predict(batch["image"], max_len, None)
+                    predicts = model.predict(batch["image"], max_len, **kws_sampler)
 
                 predicts_collected.extend(predicts.cpu())
+
+                if "code" in batch:
+                    targets_collected.extend(batch["code"].cpu())
 
                 metrics.update()  # 
 
@@ -466,5 +479,5 @@ class Trainer:
                     break
 
         print(f'Predict [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
-        return predicts_collected
+        return predicts_collected, targets_collected
         
