@@ -42,13 +42,16 @@ class ImageCodeDataset(Dataset):
         self.rects = self.hi["rects"] if has_rect else None
         self.hc = h5py.File(code_path, "r")
         self.max_len = self.hc.attrs["max_len"]
+        self.codes = self.hc["ivs"]
+        self.code_lens = self.hc["les"]
+
+        self.short
+
         self.idx = self.hc["idx"] if has_rect else None
         self.ids = self.hc["ids"] if has_rect else None
         self.pid = self.hc["pid"] if has_rect else None
         self.piv = self.hc["piv"] if has_rect else None
-        self.codes = self.hc["ivs"]
-        self.code_lens = self.hc["les"]
-
+        
     def summary(self, header: Optional[str] = None):
         print()
         if header is not None:

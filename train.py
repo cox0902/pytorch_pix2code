@@ -49,7 +49,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--epochs", default=3600, type=int)
 
-    parser.add_argument("--no-comma", action="store_false")
+    parser.add_argument("--no-comma", action="store_true")
 
     return parser
 
