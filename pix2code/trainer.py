@@ -7,12 +7,13 @@ import torch
 from torch import nn
 from torch import optim
 
-if torch.__version__ >= "2.4":
-    from torch.amp import autocast, GradScaler
-else:
-    from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
-    torch.amp.autocast = autocast
-    torch.amp.GradScaler = GradScaler
+# if torch.__version__ >= "2.4":
+#     from torch.amp import autocast, GradScaler
+# else:
+#     from torch.cuda.amp import autocast, GradScaler  # torch 2.4.0 warning
+#     torch.amp.autocast = autocast
+#     torch.amp.GradScaler = GradScaler
+from torch.cuda.amp import autocast, GradScaler
 
 from torch.optim.swa_utils import AveragedModel
 from torch.optim.lr_scheduler import LRScheduler
