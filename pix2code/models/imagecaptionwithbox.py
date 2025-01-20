@@ -117,7 +117,7 @@ class DecoderWithAttention(nn.Module):
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
         self.fc_cls = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.fc_box = nn.Linear(decoder_dim, 4)  #
+        self.fc_box = nn.Linear(196, 4)  #
         # self.fc_equ = nn.Linear(decoder_dim, 1)  #
         # self.fc_ign = nn.Linear(decoder_dim, 1)  #
         self.init_weights()  # initialize some layers with the uniform distribution
