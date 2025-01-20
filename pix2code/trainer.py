@@ -216,7 +216,7 @@ class Trainer:
             batch = self.to_device(batch)
             # targets = batch["target"]
 
-            with autocast("cuda", enabled=self.scaler is not None):
+            with autocast(enabled=self.scaler is not None):  # "cuda", 
                 outputs = self.model(batch)
 
             self.optimizer.zero_grad()
