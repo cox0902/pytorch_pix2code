@@ -45,7 +45,7 @@ class ImageCodeDataset(Dataset):
         self.codes = self.hc["ivs"]
         self.code_lens = self.hc["les"]
 
-        self.is_short = self.images.size(0) < self.codes.size(0)
+        self.is_short = self.images.shape[0] < self.codes.shape[0]
 
         self.idx = self.hc["idx"] if has_rect else None
         self.ids = self.hc["ids"] if has_rect else None
