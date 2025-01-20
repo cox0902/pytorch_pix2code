@@ -66,7 +66,7 @@ def main(args):
     elif args.model in ['imagecaptionwithbox', 'icwb']:
         from dt.trainer import Trainer as DtTrainer
         t = DtTrainer.load_checkpoint(args.model_resnet)
-        model = ImageCaptionWithBox(t.get_inner_model(), vocab_size=90)
+        model = ImageCaptionWithBox(t.get_inner_model().resnet, vocab_size=90)
     elif args.model == 'detr':
         model = Detr(num_classes=90)
     else:
