@@ -45,7 +45,7 @@ class ImageCodeDataset(Dataset):
         self.codes = self.hc["ivs"]
         self.code_lens = self.hc["les"]
 
-        self.short
+        self.is_short = self.images.size(0) < self.codes.size(0)
 
         self.idx = self.hc["idx"] if has_rect else None
         self.ids = self.hc["ids"] if has_rect else None
@@ -73,7 +73,7 @@ class ImageCodeDataset(Dataset):
     def __getitem__(self, index: int) -> Dict:
         code_idx = self.__idx(index)
         img_idx = code_idx
-        if self.has_rect:
+        if self.has_rect and self.is_short:
             img_idx = self.idx[img_idx]
 
         image = torch.from_numpy(self.images[img_idx])
@@ -121,27 +121,28 @@ class ImageCodeDataset(Dataset):
             item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
 
             #
-            mask = Image.new("L", (image.size(1), image.size(2)), 0)
+            if self.is_short:
+                mask = Image.new("L", (image.size(1), image.size(2)), 0)
 
-            pid = self.pid[code_idx]
-            piv = self.piv[code_idx]
-            if pid != -1:
-                loc = np.where(np.logical_and(
-                    self.labels[:, 0] == img_idx,
-                    self.labels[:, 1] == pid
-                ))
-                assert len(loc[0]) == 1
-                rect = self.rects[loc[0]]
-            else:
-                rect = (0, 0, image.size(1) - 1, image.size(2) - 1)
+                pid = self.pid[code_idx]
+                piv = self.piv[code_idx]
+                if pid != -1:
+                    loc = np.where(np.logical_and(
+                        self.labels[:, 0] == img_idx,
+                        self.labels[:, 1] == pid
+                    ))
+                    assert len(loc[0]) == 1
+                    rect = self.rects[loc[0]]
+                else:
+                    rect = (0, 0, image.size(1) - 1, image.size(2) - 1)
 
-            mask_draw = ImageDraw.Draw(mask)
-            mask_draw.rectangle(rect, fill=255)
-        
-            mask = torch.FloatTensor(np.asarray(mask) / 255.)
-            mask = mask.unsqueeze(0)
-            item["image"] = torch.cat([item["image"], mask], dim=0)
-            item["pid"] = pid
-            item["piv"] = piv
+                mask_draw = ImageDraw.Draw(mask)
+                mask_draw.rectangle(rect, fill=255)
+            
+                mask = torch.FloatTensor(np.asarray(mask) / 255.)
+                mask = mask.unsqueeze(0)
+                item["image"] = torch.cat([item["image"], mask], dim=0)
+                item["pid"] = pid
+                item["piv"] = piv
         return item
     
