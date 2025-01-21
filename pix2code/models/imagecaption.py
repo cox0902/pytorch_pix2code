@@ -9,11 +9,12 @@ class Encoder(nn.Module):
     Encoder.
     """
 
-    def __init__(self, encoded_image_size=14):
+    def __init__(self, resnet = None, encoded_image_size=14):
         super(Encoder, self).__init__()
         self.enc_image_size = encoded_image_size
 
-        resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)  # pretrained ImageNet ResNet-101
+        if resnet is None:
+            resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)  # pretrained ImageNet ResNet-101
 
         # Remove linear and pool layers (since we're not doing classification)
         modules = list(resnet.children())[:-2]
@@ -254,12 +255,12 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaption(nn.Module):
 
-    def __init__(self, vocab_size: int):
+    def __init__(self, vocab_size: int, resnet = None):
         super().__init__()
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.alpha_c = 1.
-        self.encoder = Encoder()
+        self.encoder = Encoder(resnet)
         self.decoder = DecoderWithAttention(attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,

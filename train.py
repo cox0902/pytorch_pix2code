@@ -9,6 +9,8 @@ from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 
+import torchvision
+
 from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
 
 from pix2code.utils import seed_everything
@@ -62,7 +64,15 @@ def main(args):
     if args.model == "pix2code":
         model = Pix2Code(vocab_size=90)
     elif args.model == 'imagecaption':
-        model = ImageCaption(vocab_size=90)
+        if args.model_resnet is None:
+            resnet = None
+        elif args.model_resnet == "50":
+            resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+        elif args.model_resnet == "101":
+            resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
+        else:
+            assert False
+        model = ImageCaption(vocab_size=90, resnet=resnet)
     elif args.model in ['imagecaptionwithbox', 'icwb']:
         from dt.trainer import Trainer as DtTrainer
         t = DtTrainer.load_checkpoint(args.model_resnet)

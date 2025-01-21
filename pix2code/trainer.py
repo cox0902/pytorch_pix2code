@@ -118,23 +118,45 @@ class Trainer:
         print(f"- The new learning rate is {self.optimizer.param_groups[0]['lr']}\n")
 
     def save_checkpoint(self, epoch: int, epochs_since_improvement: int, score, is_best: bool,
-                        save_checkpoint: bool = True):
-        state = {
-            'seed': torch.initial_seed(),
-            'epoch': epoch,
-            'epochs_since_improvement': epochs_since_improvement,
-            'score': score,
-            'model': self.model,
-            'optimizer': self.optimizer,
-            'scaler': self.scaler,
-            'state': get_rng_state(self.generator)
-        }
-        if self.ema_model is not None:
-            state['ema_model'] = self.ema_model
-        if is_best:
-            torch.save(state, 'BEST.pth.tar')
-        elif save_checkpoint:
-            torch.save(state, 'checkpoint.pth.tar')
+                        save_checkpoint: bool = True, version: int = 1):
+        if version == 1:
+            state = {
+                'seed': torch.initial_seed(),
+                'epoch': epoch,
+                'epochs_since_improvement': epochs_since_improvement,
+                'score': score,
+                'model': self.model,
+                'optimizer': self.optimizer,
+                'scaler': self.scaler,
+                'state': get_rng_state(self.generator)
+            }
+            if self.ema_model is not None:
+                state['ema_model'] = self.ema_model
+            if is_best:
+                torch.save(state, 'BEST.pth.tar')
+            elif save_checkpoint:
+                torch.save(state, 'checkpoint.pth.tar')
+        elif version == 2:
+            state = {
+                'version': version,
+                'seed': torch.initial_seed(),
+                'epoch': epoch,
+                'epochs_since_improvement': epochs_since_improvement,
+                'score': score,
+                'name': self.get_inner_model().__class__.__name__,
+                'model': self.model,
+                'optimizer': self.optimizer,
+                'scaler': self.scaler,
+                'state': get_rng_state(self.generator)
+            }
+            if self.ema_model is not None:
+                state['ema_model'] = self.ema_model
+            if is_best:
+                torch.save(state, 'BEST.pth.tar')
+            elif save_checkpoint:
+                torch.save(state, 'checkpoint.pth.tar')
+        else:
+            assert False
 
     @staticmethod
     def load_checkpoint(save_file: str = None, is_best: bool = True) -> "Trainer":
