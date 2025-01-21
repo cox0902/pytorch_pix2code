@@ -89,7 +89,8 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
+    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
+                 embed_parent=False):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -106,12 +107,16 @@ class DecoderWithAttention(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
         self.dropout = dropout
+        self.embed_parent = embed_parent
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        if self.embed_parent:
+            self.decode_step = nn.LSTMCell(2 * embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        else:
+            self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
@@ -165,7 +170,7 @@ class DecoderWithAttention(nn.Module):
         c = self.init_c(mean_encoder_out)
         return h, c
 
-    def forward(self, encoder_out, encoded_captions, caption_lengths):
+    def forward(self, encoder_out, encoded_captions, caption_lengths, pivs):
         """
         Forward propagation.
 
@@ -190,6 +195,9 @@ class DecoderWithAttention(nn.Module):
 
         # Embedding
         embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
+        if self.embed_parent:
+            pivs_sorted = pivs[sort_ind]
+            embeddings_parent = self.embedding(pivs_sorted)
 
         # Initialize LSTM state
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
@@ -214,9 +222,14 @@ class DecoderWithAttention(nn.Module):
                                                                 h[:batch_size_t])
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
-            h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
+            if self.embed_parent:
+                h, c = self.decode_step(
+                    torch.cat([embeddings_parent[:batch_size_t, :], embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                    (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
+            else:
+                h, c = self.decode_step(
+                    torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                    (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             h = self.dropout(h)
             preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # (batch_size_t, vocab_size)
             preds_box[:batch_size_t, t, :] = self.fc_box(alpha).sigmoid()
@@ -230,7 +243,7 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithBox(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int):
+    def __init__(self, resnet, vocab_size: int, embed_parent: bool = False):
         super().__init__()
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
@@ -238,7 +251,8 @@ class ImageCaptionWithBox(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5)
+                                            dropout=0.5,
+                                            embed_parent=embed_parent)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_box = torchvision.ops.generalized_box_iou_loss
         # self.criterion_equ = nn.BCEWithLogitsLoss()
@@ -249,6 +263,7 @@ class ImageCaptionWithBox(nn.Module):
         imgs = batch["image"]
         caps = batch["code"].long()
         caplens = batch["code_len"]
+        pivs = batch["piv"].long()
         
         boxs = batch["rect"]
         # equs = batch["equal"].float()
@@ -258,7 +273,7 @@ class ImageCaptionWithBox(nn.Module):
         imgs = self.encoder(imgs)
         # preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
         #     self.decoder(imgs, caps, caplens)
-        preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens)
+        preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens, pivs)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
         truth_cls = caps_sorted[:, 1:]

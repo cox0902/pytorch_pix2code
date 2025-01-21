@@ -143,6 +143,6 @@ class ImageCodeDataset(Dataset):
                 mask = mask.unsqueeze(0)
                 item["image"] = torch.cat([item["image"], mask], dim=0)
                 item["pid"] = pid
-                item["piv"] = piv
+                item["piv"] = piv if pid != -1 else 3
         return item
     
