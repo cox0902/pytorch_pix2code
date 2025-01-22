@@ -73,14 +73,15 @@ def main(args):
         else:
             assert False
         model = ImageCaption(vocab_size=90, resnet=resnet)
-    elif args.model in ['imagecaptionwithbox', 'icwb']:
+    elif args.model.startswith("imagecaptionwithbox") or args.model.startswith("icwb"):
+        embed_parent = 0
+        if args.model[-1] == "2":
+            embed_parent = 1
+        elif args.model[-1] == "3":
+            embed_parent = 2
         from dt.trainer import Trainer as DtTrainer
         t = DtTrainer.load_checkpoint(args.model_resnet)
-        model = ImageCaptionWithBox(t.get_inner_model().resnet, vocab_size=90)
-    elif args.model in ['imagecaptionwithbox2', 'icwb2']:
-        from dt.trainer import Trainer as DtTrainer
-        t = DtTrainer.load_checkpoint(args.model_resnet)
-        model = ImageCaptionWithBox(t.get_inner_model().resnet, vocab_size=90, embed_parent=True)
+        model = ImageCaptionWithBox(t.get_inner_model().resnet, vocab_size=90, embed_parent=embed_parent)
     elif args.model == 'detr':
         model = Detr(num_classes=90)
     else:
@@ -107,7 +108,7 @@ def main(args):
         split_train, split_valid, split_test = None, None, None
 
     has_comma = (not args.no_comma)
-    has_rect = (args.model in ['imagecaptionwithbox', 'imagecaptionwithbox2', 'icwb', 'icwb2', 'detr'])
+    has_rect = (args.model.startswith("imagecaptionwithbox") or args.model.startswith("icwb") or args.model == 'detr')
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
                                  has_comma=has_comma, has_rect=has_rect)

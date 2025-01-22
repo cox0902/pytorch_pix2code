@@ -90,7 +90,7 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 embed_parent=False):
+                 embed_parent=0):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -113,7 +113,7 @@ class DecoderWithAttention(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
-        if self.embed_parent:
+        if self.embed_parent == 1:
             self.decode_step = nn.LSTMCell(2 * embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         else:
             self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
@@ -195,7 +195,7 @@ class DecoderWithAttention(nn.Module):
 
         # Embedding
         embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
-        if self.embed_parent:
+        if self.embed_parent != 0:
             pivs_sorted = pivs[sort_ind]
             embeddings_parent = self.embedding(pivs_sorted)
 
@@ -222,9 +222,14 @@ class DecoderWithAttention(nn.Module):
                                                                 h[:batch_size_t])
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
-            if self.embed_parent:
+            if self.embed_parent == 1:
                 h, c = self.decode_step(
                     torch.cat([embeddings_parent[:batch_size_t, :], embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                    (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
+            elif self.embed_parent == 2:
+                new_embeddings = embeddings[:, t, :] + embeddings_parent
+                h, c = self.decode_step(
+                    torch.cat([new_embeddings[:batch_size_t, :], attention_weighted_encoding], dim=1),
                     (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             else:
                 h, c = self.decode_step(
@@ -243,7 +248,7 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithBox(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, embed_parent: bool = False):
+    def __init__(self, resnet, vocab_size: int, embed_parent: int = 0):
         super().__init__()
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
