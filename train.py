@@ -2,6 +2,7 @@ from typing import *
 
 import argparse
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 import numpy as np
 
@@ -79,9 +80,20 @@ def main(args):
             embed_parent = 1
         elif args.model[-1] == "3":
             embed_parent = 2
-        from dt.trainer import Trainer as DtTrainer
-        t = DtTrainer.load_checkpoint(args.model_resnet)
-        model = ImageCaptionWithBox(t.get_inner_model().resnet, vocab_size=90, embed_parent=embed_parent)
+        if args.model_resnet.startswith("vm://"):
+            model_url = urlparse(args.model_resnet)
+            model_name = model_url.netloc
+            model_params = model_url.query.split("&")
+            load_weight = ("load_weight" in model_params)
+            copy_weight = ("copy_weight" in model_params)
+            print(f"vm:// {model_name} ? load_weight={load_weight} & copy_weight={copy_weight}")
+            from dt.models import VisModel
+            resnet = VisModel(model=model_name, load_weight=load_weight, copy_weight=copy_weight).resnet
+        else:
+            from dt.trainer import Trainer as DtTrainer
+            t = DtTrainer.load_checkpoint(args.model_resnet)
+            resnet = t.get_inner_model().resnet
+        model = ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
     elif args.model == 'detr':
         model = Detr(num_classes=90)
     else:
