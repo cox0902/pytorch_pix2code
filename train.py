@@ -71,6 +71,25 @@ def main(args):
             resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
         elif args.model_resnet == "101":
             resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
+        elif args.model_resnet.startswith("vm://"):
+            model_url = urlparse(args.model_resnet)
+            model_name = model_url.netloc
+            model_params = parse_qs(model_url.query)
+            model_variant = model_params["variant"][0]
+            if model_name == "resnet":
+                if model_variant == "50":
+                    resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+                elif model_variant == "101":
+                    resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
+                else:
+                    assert False
+            elif model_name == "resnext":
+                if model_variant == "50":
+                    resnet = torchvision.models.resnext50_32x4d(weights=torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT)
+                else:
+                    assert False
+            else:
+                assert False
         else:
             assert False
         model = ImageCaption(vocab_size=90, resnet=resnet)

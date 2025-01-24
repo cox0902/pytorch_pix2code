@@ -39,7 +39,7 @@ class CNNModel(nn.Module):
         )
 
     def forward(self, x):
-        return self.model(x).permute(0, 2, 3, 1)  # (batch, H, W, C)
+        return self.model(x).permute(0, 2, 3, 1)  # (batch_size, H, W, C)
 
 
 class LSTMEncoder(nn.Module):
@@ -107,23 +107,27 @@ class LSTMDecoder(nn.Module):
 
 
 class Seq2SeqModel(nn.Module):
-    def __init__(self, cnn_feature_size, encoder_hidden_size, decoder_hidden_size, target_vocab_size, config):
+    def __init__(self, cnn_feature_size, encoder_num_hidden, encoder_num_layers, decoder_num_layers, 
+                 target_vocab_size, target_embedding_size, max_encoder_l_w, max_encoder_l_h, max_decoder_l,
+                 dropout):
         super(Seq2SeqModel, self).__init__()
+        decoder_num_hidden = encoder_num_hidden * 2
+
+        self.pos_embedding_fw = nn.Embedding(max_encoder_l_h, encoder_num_layers * encoder_num_hidden * 2)
+        self.pos_embedding_bw = nn.Embedding(max_encoder_l_h, encoder_num_layers * encoder_num_hidden * 2)
         self.cnn_model = CNNModel()
-        self.encoder_fw = LSTMEncoder(
-            input_size=cnn_feature_size, hidden_size=encoder_hidden_size, num_layers=config["encoder_num_layers"]
+        self.encoder_fw = nn.LSTM(
+            cnn_feature_size, encoder_num_hidden, encoder_num_layers, batch_first=True, dropout=dropout
         )
-        self.encoder_bw = LSTMEncoder(
-            input_size=cnn_feature_size, hidden_size=encoder_hidden_size, num_layers=config["encoder_num_layers"]
+        self.encoder_bw = nn.LSTM(
+            cnn_feature_size, encoder_num_hidden, encoder_num_layers, batch_first=True, dropout=dropout
         )
-        attention = Attention(hidden_size=decoder_hidden_size)
-        self.decoder = LSTMDecoder(
-            output_size=target_vocab_size,
-            embedding_size=config["target_embedding_size"],
-            hidden_size=decoder_hidden_size,
-            num_layers=config["decoder_num_layers"],
-            attention=attention,
+        self.decoder = nn.LSTM(
+            target_embedding_size, decoder_num_hidden, decoder_num_layers, batch_first=True, dropout=dropout
         )
+        self.output_projector = nn.Linear(decoder_num_hidden, target_vocab_size)
+
+        # attention = Attention(hidden_size=decoder_hidden_size)
 
     def forward(self, input_batch, target_batch=None):
         # CNN Encoder
