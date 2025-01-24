@@ -76,6 +76,7 @@ def main(args):
             model_name = model_url.netloc
             model_params = parse_qs(model_url.query)
             model_variant = model_params["variant"][0]
+            print(f"vm:// {model_name} ? variant={model_variant}")
             if model_name == "resnet":
                 if model_variant == "50":
                     resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
