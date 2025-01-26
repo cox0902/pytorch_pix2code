@@ -214,14 +214,9 @@ class DecoderWithAttention(nn.Module):
         return predictions, encoded_captions, decode_lengths, alphas, sort_ind
     
     def predict(self, encoder_out, captions, hiddens = None):
-        # batch_size = encoder_out.size(0)
-        # encoder_dim = encoder_out.size(-1)
-
-        # Flatten image
-        # encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
-
         # Embedding
-        embeddings = self.embedding(captions)  # (batch_size, 1, embed_dim)
+        # print(captions.shape)
+        embeddings = self.embedding(captions)  # (batch_size, embed_dim)
         # print(embeddings.shape)
 
         # Initialize LSTM state
@@ -235,7 +230,7 @@ class DecoderWithAttention(nn.Module):
                 gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
                 attention_weighted_encoding = gate * attention_weighted_encoding
                 h, c = self.decode_step(
-                    torch.cat([embeddings[:, t, :], attention_weighted_encoding], dim=1),
+                    torch.cat([embeddings, attention_weighted_encoding], dim=1),
                     (h, c))  # (batch_size_t, decoder_dim)
                 preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
         else:
@@ -246,7 +241,7 @@ class DecoderWithAttention(nn.Module):
             gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
             h, c = self.decode_step(
-                torch.cat([embeddings[:, -1, :], attention_weighted_encoding], dim=1),
+                torch.cat([embeddings, attention_weighted_encoding], dim=1),
                 (h, c))  # (batch_size_t, decoder_dim)
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
 
@@ -293,7 +288,7 @@ class ImageCaption(nn.Module):
 
         return {
             "loss": loss, 
-            "scores": scores, 
+            "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets
         }
     
@@ -309,7 +304,34 @@ class ImageCaption(nn.Module):
     #         "scores": preds,
     #         "hiddens": hiddens
     #     }
-    
+
+    def predict_init(self, images):
+        batch_size = images.size(0)
+        
+        # with torch.no_grad() should be called outside this scope.
+        encoder_out = self.encoder(images)
+        encoder_dim = encoder_out.size(-1)
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+
+        h, c = self.decoder.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+        
+        return {
+            "encoder_out": encoder_out,
+            "h": h,
+            "c": c,
+        }
+
+    def predict_next(self, inputs, contexts):
+        
+        # with torch.no_grad() should be called outside this scope.
+        scores, _, (h, c) = self.decoder.predict(contexts["encoder_out"], inputs, (contexts["h"], contexts["c"]))
+        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
+        
+        return predicts, scores, {
+            "h": h,
+            "c": c,
+        }
+
     def predict(self, images, max_seq_len: int):
         self.eval()
 

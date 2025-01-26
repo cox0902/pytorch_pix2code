@@ -67,11 +67,7 @@ class ContextEncoder(nn.Module):
         # x = [batch_size, seq_length, vocab_size]
 
         if h is None:
-            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, 
-                             dtype=x.dtype, device=x.device)
-            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, 
-                             dtype=x.dtype, device=x.device)
-            h = (h0, c0)
+            h = self.init_hidden_state(x)
 
         x_packed, idx_unsort = sort_n_pack_padded_sequence(x, x_len)
 
@@ -79,6 +75,15 @@ class ContextEncoder(nn.Module):
 
         y = pad_packed_sequence_n_unsort(y_packed, idx_unsort, max_len=x.size(1))
         return y  # [batch_size, seq_length, hidden_size]
+    
+    def init_hidden_state(self, x):
+        h = torch.zeros(self.num_layers, x.size(0), self.hidden_size, dtype=x.dtype, device=x.device)
+        c = torch.zeros(self.num_layers, x.size(0), self.hidden_size, dtype=x.dtype, device=x.device)
+        return h, c
+
+    def predict(self, x, hiddens):
+        y, hiddens = self.rnn(x, hiddens)
+        return y, hiddens
     
 
 class Decoder(nn.Module):
@@ -99,11 +104,7 @@ class Decoder(nn.Module):
         x = torch.cat((x_image, x_context), dim=2)  # -> [batch_size, seq_length, 1024 + 128]
 
         if h is None:
-            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, 
-                             dtype=x.dtype, device=x.device)
-            c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, 
-                             dtype=x.dtype, device=x.device)
-            h = (h0, c0)
+            h = self.init_hidden_state(x)
 
         x_packed, _ = sort_n_pack_padded_sequence(x, x_length)
 
@@ -111,6 +112,19 @@ class Decoder(nn.Module):
 
         y_packed = self.fc(y_packed.data)
         return y_packed, h  # softmax is omit for CrossEntropyLoss  
+    
+    def init_hidden_state(self, x):
+        h = torch.zeros(self.num_layers, x.size(0), self.hidden_size, dtype=x.dtype, device=x.device)
+        c = torch.zeros(self.num_layers, x.size(0), self.hidden_size, dtype=x.dtype, device=x.device)
+        return h, c
+    
+    def predict(self, x_image: torch.Tensor, x_context, hiddens):
+        x_image = x_image.unsqueeze(1)  # (batch_size, 1, 1024)
+        # print(x_image.shape, x_context.shape)
+        x = torch.cat((x_image, x_context), dim=-1)
+        y, hiddens = self.rnn(x, hiddens)
+        y = self.fc(y)
+        return y.squeeze(1), hiddens
     
 
 class Pix2Code(nn.Module):
@@ -138,4 +152,42 @@ class Pix2Code(nn.Module):
             "loss": loss, 
             "scores": F.softmax(decoded, dim=-1), 
             "targets": target_packed.data
+        }
+    
+    def predict_init(self, images):
+        encoded_image = self.image_encoder(images)
+
+        h_en, c_en = self.context_encoder.init_hidden_state(images)
+        h_de, c_de = self.decoder.init_hidden_state(images)
+
+        return {
+            "encoded_image": encoded_image,
+            "h_en": h_en.permute(1, 0, 2),
+            "c_en": c_en.permute(1, 0, 2),
+            "h_de": h_de.permute(1, 0, 2),
+            "c_de": c_de.permute(1, 0, 2)
+        }
+    
+    def predict_next(self, inputs, contexts):
+
+        inputs = F.one_hot(inputs.long(), num_classes=90).float().unsqueeze(1)
+
+        h_en = contexts["h_en"].permute(1, 0, 2)
+        c_en = contexts["c_en"].permute(1, 0, 2)
+        encoded_context, (h_en, c_en) = self.context_encoder.predict(inputs, (h_en, c_en))
+
+        h_de = contexts["h_de"].permute(1, 0, 2)
+        c_de = contexts["c_de"].permute(1, 0, 2)
+        scores, (h_de, c_de) = self.decoder.predict(contexts["encoded_image"], encoded_context, (h_de, c_de))
+        
+        # print(scores.shape)
+        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
+
+        # print(predicts.shape)
+
+        return predicts, scores, {
+            "h_en": h_en.permute(1, 0, 2),
+            "c_en": c_en.permute(1, 0, 2),
+            "h_de": h_de.permute(1, 0, 2),
+            "c_de": c_de.permute(1, 0, 2),
         }

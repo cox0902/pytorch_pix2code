@@ -57,70 +57,78 @@ def get_args_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_model(model: str):
+    # TODO: Overwrite preset params.
+    model_name = model
+    model_params = {}
+    if model.startswith("vm://"):
+        model_url = urlparse(model)
+        model_name = model_url.netloc
+        model_params = parse_qs(model_url.query)
+    return model_name, model_params
+
+
+def build_resnet_model(model_resnet: str):
+    model_resnet_name, model_resnet_params = parse_model(model_resnet)
+    variant = model_resnet_params["variant"][0]
+    load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
+    if model_resnet_name == "resnet":
+        if variant == "50":
+            if load_weight:
+                return torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
+            else:
+                return torchvision.models.resnet50()
+        elif variant == "101":
+            if load_weight:
+                return torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
+            else:
+                return torchvision.models.resnet101()
+        else:
+            assert False
+    elif model_resnet_name == "resnext":
+        if variant == "50":
+            if load_weight:
+                return torchvision.models.resnext50_32x4d(weights=torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT)
+            else:
+                return torchvision.models.resnext50_32x4d()
+        else:
+            assert False
+    elif model_resnet_name == "vis":
+        copy_weight = ("copy_weight" in model_resnet_params) and (model_resnet_params["copy_weight"][0] != "0")
+        from dt.models import VisModel
+        return VisModel(model=variant, load_weight=load_weight, copy_weight=copy_weight).resnet
+    else:
+        from dt.trainer import Trainer as DtTrainer
+        t = DtTrainer.load_checkpoint(model_resnet_name)
+        return t.get_inner_model().resnet
+
+
+def build_model(model: str, model_resnet: str):
+    model_name, model_params = parse_model(model)
+    assert model_name is not None
+    if model_name == "pix2code":
+        return Pix2Code(vocab_size=90), False
+    elif model_name == "imagecaption":
+        resnet = build_resnet_model(model_resnet)
+        return ImageCaption(vocab_size=90, resnet=resnet), False
+    elif model_name in ["imagecaptionwithbox", "icwb"]:
+        resnet = build_resnet_model(model_resnet)
+        embed_parent = int(model_params["embed_parent"]) if "embed_parent" in model_params else 0
+        return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent), True
+    else:
+        t = Trainer.load_checkpoint(model_name)
+        return t.get_inner_model(), False
+
+
 def main(args):
     print(args)
 
     generator, seed_worker = seed_everything(args.seed)
 
-    if args.model == "pix2code":
-        model = Pix2Code(vocab_size=90)
-    elif args.model == 'imagecaption':
-        if args.model_resnet is None:
-            resnet = None
-        elif args.model_resnet == "50":
-            resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
-        elif args.model_resnet == "101":
-            resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
-        elif args.model_resnet.startswith("vm://"):
-            model_url = urlparse(args.model_resnet)
-            model_name = model_url.netloc
-            model_params = parse_qs(model_url.query)
-            model_variant = model_params["variant"][0]
-            print(f"vm:// {model_name} ? variant={model_variant}")
-            if model_name == "resnet":
-                if model_variant == "50":
-                    resnet = torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
-                elif model_variant == "101":
-                    resnet = torchvision.models.resnet101(weights=torchvision.models.ResNet101_Weights.DEFAULT)
-                else:
-                    assert False
-            elif model_name == "resnext":
-                if model_variant == "50":
-                    resnet = torchvision.models.resnext50_32x4d(weights=torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT)
-                else:
-                    assert False
-            else:
-                assert False
-        else:
-            assert False
-        model = ImageCaption(vocab_size=90, resnet=resnet)
-    elif args.model.startswith("imagecaptionwithbox") or args.model.startswith("icwb"):
-        embed_parent = 0
-        if args.model[-1] == "2":
-            embed_parent = 1
-        elif args.model[-1] == "3":
-            embed_parent = 2
-        if args.model_resnet.startswith("vm://"):
-            model_url = urlparse(args.model_resnet)
-            model_name = model_url.netloc
-            model_params = model_url.query.split("&")
-            load_weight = ("load_weight" in model_params)
-            copy_weight = ("copy_weight" in model_params)
-            print(f"vm:// {model_name} ? load_weight={load_weight} & copy_weight={copy_weight}")
-            from dt.models import VisModel
-            resnet = VisModel(model=model_name, load_weight=load_weight, copy_weight=copy_weight).resnet
-        else:
-            from dt.trainer import Trainer as DtTrainer
-            t = DtTrainer.load_checkpoint(args.model_resnet)
-            resnet = t.get_inner_model().resnet
-        model = ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
-    elif args.model == 'detr':
-        model = Detr(num_classes=90)
-    else:
-        t = Trainer.load_checkpoint(args.model)
-        model = t.get_inner_model()
-        if args.compat:
-            model.criterion = nn.CrossEntropyLoss()
+    model, has_rect = build_model(args.model, args.model_resnet)
+
+    if args.compat:
+        model.criterion = nn.CrossEntropyLoss()
 
     if args.opt == "adam":
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -140,7 +148,6 @@ def main(args):
         split_train, split_valid, split_test = None, None, None
 
     has_comma = (not args.no_comma)
-    has_rect = (args.model.startswith("imagecaptionwithbox") or args.model.startswith("icwb") or args.model == 'detr')
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
                                  has_comma=has_comma, has_rect=has_rect)

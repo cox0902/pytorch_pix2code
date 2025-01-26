@@ -133,6 +133,10 @@ class Seq2SeqModel(nn.Module):
         # CNN Encoder
         cnn_outputs = self.cnn_model(input_batch)
         batch_size, H, W, _ = cnn_outputs.size()
+
+        pos = torch.range(0, H).repeat((batch_size, 1))  # (batch_size, H)
+        pos_embedding_fw = self.pos_embedding_fw(pos)
+
         encoder_outputs_fw = []
         encoder_outputs_bw = []
 

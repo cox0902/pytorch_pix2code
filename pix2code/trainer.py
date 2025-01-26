@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 
 from .metrics import Metrics, EmptyMetrics
 from .utils import get_rng_state
+from .generators import GreedySearch, BeamSearch
 
 
 class ExponentialMovingAverage(AveragedModel):
@@ -462,14 +463,13 @@ class Trainer:
             if proof_of_concept:
                 break
 
-    def predict(self, data_loader: DataLoader, max_len: int, sampler: str = "greedy",
-                proof_of_concept: bool = False, **kws_sampler):
+    def predict(self, data_loader: DataLoader, generator: Union[GreedySearch, BeamSearch], 
+                proof_of_concept: bool = False):
+        
         if proof_of_concept:
-            print("sampler:", sampler)
+            print("generator:", generator)
 
-        model = self.get_model()
-        if self.ema_model is not None:
-            model = model.module
+        model = self.get_inner_model()
         model.eval()
         model.proof_of_concept = proof_of_concept
 
@@ -483,10 +483,7 @@ class Trainer:
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
 
-                if sampler == "beam":
-                    predicts = model.predict_beam(batch["image"], max_len, **kws_sampler)
-                else:
-                    predicts = model.predict(batch["image"], max_len, **kws_sampler)
+                predicts = generator.search(model, batch["image"])
 
                 predicts_collected.extend(predicts.cpu())
 
