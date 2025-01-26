@@ -68,11 +68,13 @@ def parse_model(model: str):
     return model_name, model_params
 
 
-def build_resnet_model(model_resnet: str):
+def build_resnet_model(model_resnet: str, verbose: bool = True):
     model_resnet_name, model_resnet_params = parse_model(model_resnet)
     variant = model_resnet_params["variant"][0]
     load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
     if model_resnet_name == "resnet":
+        if verbose:
+            print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
             if load_weight:
                 return torchvision.models.resnet50(weights=torchvision.models.ResNet50_Weights.DEFAULT)
@@ -86,6 +88,8 @@ def build_resnet_model(model_resnet: str):
         else:
             assert False
     elif model_resnet_name == "resnext":
+        if verbose:
+            print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
             if load_weight:
                 return torchvision.models.resnext50_32x4d(weights=torchvision.models.ResNeXt50_32X4D_Weights.DEFAULT)
@@ -95,9 +99,13 @@ def build_resnet_model(model_resnet: str):
             assert False
     elif model_resnet_name == "vis":
         copy_weight = ("copy_weight" in model_resnet_params) and (model_resnet_params["copy_weight"][0] != "0")
+        if verbose:
+            print(f">>> Build {model_resnet_name} with variant={variant}, load_weight={load_weight} and copy_weight={copy_weight}")
         from dt.models import VisModel
         return VisModel(model=variant, load_weight=load_weight, copy_weight=copy_weight).resnet
     else:
+        if verbose:
+            print(f">>> Build vis from checkpoint")
         from dt.trainer import Trainer as DtTrainer
         t = DtTrainer.load_checkpoint(model_resnet_name)
         return t.get_inner_model().resnet
@@ -113,7 +121,7 @@ def build_model(model: str, model_resnet: str):
         return ImageCaption(vocab_size=90, resnet=resnet), False
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
-        embed_parent = int(model_params["embed_parent"]) if "embed_parent" in model_params else 0
+        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent), True
     else:
         t = Trainer.load_checkpoint(model_name)
