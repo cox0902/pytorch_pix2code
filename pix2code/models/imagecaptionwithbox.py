@@ -222,11 +222,11 @@ class DecoderWithAttention(nn.Module):
                                                                 h[:batch_size_t])
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
-            if self.embed_parent == "cat":
+            if self.embed_parent == "cat" or self.embed_parent == 1:
                 h, c = self.decode_step(
                     torch.cat([embeddings_parent[:batch_size_t, :], embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                     (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            elif self.embed_parent == "add":
+            elif self.embed_parent == "add" or self.embed_parent == 2:
                 new_embeddings = embeddings[:, t, :] + embeddings_parent
                 h, c = self.decode_step(
                     torch.cat([new_embeddings[:batch_size_t, :], attention_weighted_encoding], dim=1),
@@ -337,5 +337,7 @@ class ImageCaptionWithBox(nn.Module):
             # "loss/ign": loss_ign,
             "loss/box": loss_box,
             "scores": preds_cls,  
-            "targets": truth_cls
+            "targets": truth_cls,
+            "preds_box": preds_box,
+            "truth_box": truth_box
         }

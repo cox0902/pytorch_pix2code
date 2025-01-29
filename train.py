@@ -19,7 +19,7 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, Detr
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, Detr
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -111,7 +111,7 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         return t.get_inner_model().resnet
 
 
-def build_model(model: str, model_resnet: str):
+def build_model(model: str, model_resnet: str, max_len: int):
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
@@ -123,6 +123,10 @@ def build_model(model: str, model_resnet: str):
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent), True
+    elif model_name in ["imagecaptionwithrpn", "icwr"]:
+        resnet = build_resnet_model(model_resnet)
+        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
+        return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent), True
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model(), False
@@ -132,20 +136,6 @@ def main(args):
     print(args)
 
     generator, seed_worker = seed_everything(args.seed)
-
-    model, has_rect = build_model(args.model, args.model_resnet)
-
-    if args.compat:
-        model.criterion = nn.CrossEntropyLoss()
-
-    if args.opt == "adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    elif args.opt == "adamw":
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    elif args.opt == "rmsprop":
-        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
-    else:
-        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
@@ -172,7 +162,25 @@ def main(args):
         valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     else:
         valid_loader = None
+
+    #
+
+    model, has_rect = build_model(args.model, args.model_resnet, max_len=train_set.max_len)
+
+    if args.compat:
+        model.criterion = nn.CrossEntropyLoss()
+
+    if args.opt == "adam":
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    elif args.opt == "adamw":
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+    elif args.opt == "rmsprop":
+        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+    else:
+        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
     
+    #
+
     trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
                       is_ema=args.ema, use_amp=args.amp)
     trainer.epochs_early_stop = args.epochs_early_stop

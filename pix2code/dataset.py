@@ -35,6 +35,7 @@ class ImageCodeDataset(Dataset):
         assert not (has_comma and has_rect)
         self.has_comma = has_comma
         self.has_rect = has_rect
+        self.normalize_rect = True
         
         self.hi = h5py.File(image_path, "r")
         self.images = self.hi["images"]
@@ -118,7 +119,10 @@ class ImageCodeDataset(Dataset):
                 ))
                 assert len(loc[0]) == 1, item["code"]
                 rects[i] = self.rects[loc[0]]
-            item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+            if self.normalize_rect:
+                item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+            else:
+                item["rect"] = rects
 
             #
             if self.is_short:

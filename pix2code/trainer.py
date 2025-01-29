@@ -318,6 +318,7 @@ class Trainer:
         return metrics.compute(hypotheses, references), total_loss
     
     def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, 
+             name_refs = "targets", name_hyps = "scores",
              proof_of_concept: bool = False):
         model = self.get_model()
         model.eval()
@@ -356,8 +357,8 @@ class Trainer:
                 if i % self.print_freq == 0:
                     print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
 
-                references.extend(outputs["targets"])
-                hypotheses.extend(outputs["scores"])
+                references.extend(outputs[name_refs])
+                hypotheses.extend(outputs[name_hyps])
 
                 if proof_of_concept:
                     break
@@ -375,6 +376,60 @@ class Trainer:
         if hook is None:
             return hypotheses, references, None
         return hypotheses, references, np.array(activations)
+    
+    def test_collect(self, data_loader: DataLoader, hook: Optional[str] = None, proof_of_concept: bool = False):
+        model = self.get_model()
+        model.eval()
+
+        metrics = EmptyMetrics()
+        metrics.reset(len(data_loader))
+
+        collected_outputs: Dict[str, List] = {}
+        collected_actives = []
+
+        print()
+        with torch.no_grad():
+            for i, batch in enumerate(data_loader):
+                batch = self.to_device(batch)
+                # targets = batch["target"]
+
+                if hook is not None:
+                    activation = {}
+                    def fn_hook(model, input, output):
+                        activation[hook] = output.detach()
+
+                    if self.ema_model is not None:
+                        handler = getattr(model.module.resnet, hook).register_forward_hook(fn_hook)
+                    else:
+                        handler = getattr(model.resnet, hook).register_forward_hook(fn_hook)
+
+                    outputs = model(batch)
+                    handler.remove()
+
+                    # print(activation[hook].shape)
+                    collected_actives.extend(activation[hook].squeeze().cpu().numpy())  # !! TODO: add n to squeeze
+                else:
+                    outputs = model(batch)
+               
+                metrics.update()  # 
+
+                if i % self.print_freq == 0:
+                    print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
+
+                if i == 0:
+                    for k in outputs.keys():
+                        collected_outputs[k] = []
+                for k, v in outputs.items():
+                    collected_outputs[k].append(v)
+
+                if proof_of_concept:
+                    break
+
+            print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
+            
+        if hook is None:
+            return collected_outputs, None
+        return collected_outputs, collected_actives
 
     def lr_find(self, end_lr: float, step_mode: Literal["exp", "linear"], epochs: int, 
                 train_loader: DataLoader, valid_loader: Optional[DataLoader], 
