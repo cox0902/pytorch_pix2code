@@ -232,3 +232,12 @@ class SimpleMulticlassMetrics(Metrics):
         scorer: Metric = self.scorer(num_classes=self.num_classes)
         scorer.update(hypotheses, references)
         return scorer.compute()
+    
+
+class SimpleLossMetrics(Metrics):
+
+    def __init__(self):
+        super().__init__({})
+
+    def compute(self, hypotheses, references):
+        return self.loss

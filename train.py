@@ -16,7 +16,7 @@ from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
 
 from pix2code.utils import seed_everything
 from pix2code.trainer import Trainer
-from pix2code.metrics import SimpleMulticlassMetrics
+from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, Detr
@@ -200,6 +200,8 @@ def main(args):
         metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)
     elif args.metric == "auc":
         metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAUROC)
+    elif args.metric == "loss":
+        metrics = SimpleLossMetrics()
     else:
         assert False
 
