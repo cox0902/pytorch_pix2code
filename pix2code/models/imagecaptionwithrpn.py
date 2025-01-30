@@ -1052,7 +1052,7 @@ class ImageCaptionWithRpn(nn.Module):
         preds_cls, caps_sorted, decode_lengths, alphas, sort_ind, l1, l2, l3, l4 = self.decoder(imgs, feats, caps, caplens, boxs, pivs)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        truth_cls = caps_sorted[:, 1:]
+        truth_cls = caps_sorted[:, 1:].clone()
         truth_cls[truth_cls == 4] = -1
         truth_cls[truth_cls > 0] = 1 
         truth_cls[truth_cls == -1] = 0
@@ -1074,6 +1074,7 @@ class ImageCaptionWithRpn(nn.Module):
 
         # Add doubly stochastic attention regularization
         loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+        # loss_cls = 0
 
         #
         # preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
@@ -1122,8 +1123,8 @@ class ImageCaptionWithRpn(nn.Module):
             "loss/bcls": l2,
             "loss/rcls": l3,
             "loss/rbox": l4,
-            "scores": preds_cls,  
-            "targets": truth_cls,
+            # "scores": preds_cls,  
+            # "targets": truth_cls,
             # "preds_box": preds_box,
             # "truth_box": truth_box
         }
