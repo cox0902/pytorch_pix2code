@@ -70,9 +70,9 @@ def parse_model(model: str):
 
 def build_resnet_model(model_resnet: str, verbose: bool = True):
     model_resnet_name, model_resnet_params = parse_model(model_resnet)
-    variant = model_resnet_params["variant"][0]
-    load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
     if model_resnet_name == "resnet":
+        variant = model_resnet_params["variant"][0]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
@@ -88,6 +88,8 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         else:
             assert False
     elif model_resnet_name == "resnext":
+        variant = model_resnet_params["variant"][0]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
@@ -98,6 +100,8 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         else:
             assert False
     elif model_resnet_name == "vis":
+        variant = model_resnet_params["variant"][0]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
         copy_weight = ("copy_weight" in model_resnet_params) and (model_resnet_params["copy_weight"][0] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant}, load_weight={load_weight} and copy_weight={copy_weight}")
