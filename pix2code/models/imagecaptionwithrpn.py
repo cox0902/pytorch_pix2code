@@ -1183,7 +1183,7 @@ class ImageCaptionWithRpn(nn.Module):
                 "truth_cls": truth_cls.flatten(),
                 "preds_box": torch.stack(preds_box),
                 "truth_box": torch.stack(truth_box),
-                "preds_lbl": torch.Tensor(preds_lbl),
-                "truth_lbl": torch.Tensor(truth_lbl),
+                "preds_lbl": torch.Tensor(preds_lbl).int(),
+                "truth_lbl": torch.Tensor(truth_lbl).int(),
                 "scores_lbl": torch.Tensor(scores_lbl)
             }

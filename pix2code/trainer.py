@@ -364,7 +364,10 @@ class Trainer:
                     metrics.update(outputs)
 
                 if i % self.print_freq == 0:
-                    print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
+                    if type(metrics) == Metrics:
+                        print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
+                    else:
+                        print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format()}')
 
                 if type(metrics) == Metrics:
                     references.extend(outputs[name_refs])
@@ -373,9 +376,9 @@ class Trainer:
                 if proof_of_concept:
                     break
 
-            print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
-            
             if type(metrics) == Metrics:
+                print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
+
                 hypotheses = torch.stack(hypotheses)
                 references = torch.stack(references)
                 metrics.reset(len(data_loader))
@@ -383,6 +386,8 @@ class Trainer:
                 print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
                 metrics.compute(hypotheses, references)
+            else:
+                print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format()}')
 
         if hook is None:
             return hypotheses, references, None
