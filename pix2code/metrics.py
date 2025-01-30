@@ -240,4 +240,4 @@ class SimpleLossMetrics(Metrics):
         super().__init__({})
 
     def compute(self, hypotheses, references):
-        return self.loss
+        return -self.loss

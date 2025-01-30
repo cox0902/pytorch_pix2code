@@ -111,31 +111,50 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         return t.get_inner_model().resnet
 
 
+def check_model(model: str) -> bool:
+    model_name, model_params = parse_model(model)
+    assert model_name is not None
+    if model_name == "pix2code":
+        return False
+    elif model_name == "imagecaption":
+        return False
+    elif model_name in ["imagecaptionwithbox", "icwb"]:
+        return True
+    elif model_name in ["imagecaptionwithrpn", "icwr"]:
+        return True
+    else:
+        return False
+
+
 def build_model(model: str, model_resnet: str, max_len: int):
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
-        return Pix2Code(vocab_size=90), False
+        return Pix2Code(vocab_size=90)
     elif model_name == "imagecaption":
         resnet = build_resnet_model(model_resnet)
-        return ImageCaption(vocab_size=90, resnet=resnet), False
+        return ImageCaption(vocab_size=90, resnet=resnet)
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent), True
+        return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
     elif model_name in ["imagecaptionwithrpn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent), True
+        return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent)
     else:
         t = Trainer.load_checkpoint(model_name)
-        return t.get_inner_model(), False
+        return t.get_inner_model()
 
 
 def main(args):
     print(args)
 
     generator, seed_worker = seed_everything(args.seed)
+
+    #
+
+    has_rect = check_model(args.model)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
@@ -165,7 +184,7 @@ def main(args):
 
     #
 
-    model, has_rect = build_model(args.model, args.model_resnet, max_len=train_set.max_len)
+    model = build_model(args.model, args.model_resnet, max_len=train_set.max_len)
 
     if args.compat:
         model.criterion = nn.CrossEntropyLoss()
