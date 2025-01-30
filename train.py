@@ -12,11 +12,11 @@ from torch.utils.data import DataLoader
 
 import torchvision
 
-from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
+from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC, BinaryAccuracy
 
 from pix2code.utils import seed_everything
 from pix2code.trainer import Trainer
-from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics
+from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer, MapScorer
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, Detr
@@ -35,6 +35,8 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
     parser.add_argument("--metric", default="auc", type=str)
+    parser.add_argument("--stop-metric", type=str)
+    parser.add_argument("--eval-metric", type=str)
     parser.add_argument("--early-stop", action="store_true")
     parser.add_argument("--epochs-early-stop", default=10, type=int)
     parser.add_argument("--epochs-adjust-lr", default=4, type=int)
@@ -228,8 +230,18 @@ def main(args):
     else:
         assert False
 
+    if args.eval_metric is None:
+        eval_metrics = metrics
+    else:
+        if args.eval_metric == "icwr":
+            eval_metrics = AdvMetrics([
+                SimpleMetricScorer("CLS_ACC", BinaryAccuracy(), "preds_cls", "truth_cls"),
+                SimpleMetricScorer("LBL_ACC", MulticlassAccuracy(num_classes=90), "preds_lbl", "truth_lbl"),
+                MapScorer()
+            ])
+
     trainer.fit(epochs=args.epochs, train_loader=train_loader, valid_loader=valid_loader, 
-                metrics=metrics, proof_of_concept=args.proof_of_concept)
+                metrics=metrics, eval_metrics=eval_metrics, proof_of_concept=args.proof_of_concept)
     
     if split_test is not None:
         print("=" * 100)

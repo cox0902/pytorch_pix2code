@@ -476,8 +476,9 @@ class Trainer:
 
         np.savez("lr_find.npz", lr=history_lr, loss=history_loss)
 
-    def fit(self, epochs: int, train_loader: DataLoader, valid_loader: DataLoader, metrics: Metrics,
-            save_checkpoint: bool = True, proof_of_concept: bool = False):
+    def fit(self, epochs: int, train_loader: DataLoader, valid_loader: DataLoader, metrics: Metrics, 
+            eval_metrics: Metrics, save_checkpoint: bool = True, proof_of_concept: bool = False):
+        
         assert self.generator is not None
 
         epochs_since_improvement: int = self.epochs_since_improvement
@@ -494,7 +495,7 @@ class Trainer:
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
 
             if valid_loader is not None:
-                recent_score, _ = self.valid(data_loader=valid_loader, metrics=metrics, proof_of_concept=proof_of_concept)
+                recent_score, _ = self.valid(data_loader=valid_loader, metrics=eval_metrics, proof_of_concept=proof_of_concept)
                 
                 if epoch >= self.warmup_epochs or proof_of_concept:
                     is_best = recent_score > best_score

@@ -7,6 +7,7 @@ from tabulate import tabulate
 import torch
 from torcheval.metrics import *
 from torcheval.metrics.metric import Metric
+from torchmetrics.detection import MeanAveragePrecision
 
 
 class AverageMeter:
@@ -48,12 +49,19 @@ def _tf(seconds) -> str:
         s = ("%d day%s, " % plural(td.days)) + s
     return s
     
-    
-def _format_named_meter(name: str, meter: AverageMeter, show_average: bool, precision: int = 4):
+
+def _format_named_value(name: str, value, average = None, precision: int = 4):
     format_str = f"{{name}} {{value:.{precision}f}}"
-    if show_average:
+    if average is not None:
         format_str += f" ({{average:.{precision}f}})"
-    return format_str.format(name=name, value=meter.val, average=meter.smoothed_avg)
+        return format_str.format(name=name, value=value, average=average)
+    return format_str.format(name=name, value=value)
+
+
+def _format_named_meter(name: str, meter: AverageMeter, show_average: bool, precision: int = 4):
+    if show_average:
+        return _format_named_value(name, value=meter.val, average=meter.smoothed_avg, precision=precision)
+    return _format_named_value(name, value=meter.val, precision=precision)
 
 
 class Metrics:
@@ -241,3 +249,112 @@ class SimpleLossMetrics(Metrics):
 
     def compute(self, hypotheses, references):
         return -self.loss
+    
+
+# --- v2.0
+
+class Scorer:
+
+    def __init__(self):
+        self.scorer = None
+
+    def reset(self):
+        self.scorer.reset()
+
+    def update(self, outputs):
+        self.scorer.update(outputs)
+
+    def compute(self):
+        return self.scorer.compute()
+
+
+class SimpleMetricScorer(Scorer):
+
+    def __init__(self, name, metric, name_hyp, name_ref):
+        super().__init__()
+        self.name = name
+        self.scorer = metric
+        self.name_hyp = name_hyp
+        self.name_ref = name_ref
+
+    def update(self, outputs):
+        self.scorer.update(outputs[self.name_hyp], outputs[self.name_ref])
+
+
+class MapScorer(Scorer):
+
+    def __init__(self):
+        super().__init__()
+        self.name = "MAP"
+        self.scorer = MeanAveragePrecision()
+
+    def update(self, outputs):
+        in_preds = [{
+            "boxes": outputs["preds_box"],
+            "scores": outputs["scores_lbl"],
+            "labels": outputs["preds_lbl"]
+        }]
+        in_target = [{
+            "boxes": outputs["truth_box"],
+            "labels": outputs["truth_lbl"]
+        }]
+        self.scorer.update(in_preds, in_target)
+
+
+class AdvMetrics:
+
+    def __init__(self, metrics: List[Scorer]):
+        self.start_time = time.perf_counter()
+        self.batch_time = AverageMeter()
+        self.batch_count = 0
+        self.metrics = metrics
+
+    def reset(self, batch_count):
+        self.batch_time.reset()
+        self.start_time = time.perf_counter()
+        self.batch_count = batch_count
+        for metric in self.metrics:
+            metric.reset()
+
+    def update(self, outputs: Dict[str, Any] = {}):
+        #
+        for metric in self.metrics:
+            metric.update(outputs)
+
+        self.batch_time.update(time.perf_counter() - self.start_time)
+        self.start_time = time.perf_counter()
+
+    def compute(self) -> float:
+        agg = 0
+        for metric in self.metrics:
+            agg += metric.compute()
+        return agg
+
+    def format(self, show_scores: bool = True, show_batch_time: bool = True) -> str:
+        agg_metrics = []
+
+        if torch.cuda.is_available():
+            MB = 1024.0 * 1024.0
+            ma, mr = torch.cuda.mem_get_info()
+            # ma = torch.cuda.max_memory_allocated()
+            # mr = torch.cuda.max_memory_reserved()
+            agg_metrics.append(f"{int(ma / MB)} MB / {int(mr / MB)} MB")
+
+        if show_batch_time:
+            str_inline = f"ETA {_tf(self.batch_time.sum)}"
+            if self.batch_count > 0 and self.batch_count > self.batch_time.count:
+                str_inline += f" / FIN {_tf(self.batch_time.avg * (self.batch_count - self.batch_time.count))}"
+            agg_metrics.append(str_inline)
+
+        # if show_batch_time or show_loss:8
+        #     agg_metrics.append("\n")
+        if show_scores:
+            for i, metric in enumerate(self.metrics):
+                if i % 5 == 0:
+                    agg_metrics.append("\n")
+                str_inline = _format_named_value(metric.name, metric.compute(), precision=5)
+                # str_inline = f'{metric["name"]} {metric["meter"].val:.5f}'
+                # if show_average:
+                #     str_inline += f' ({metric["meter"].avg:.5f})'
+                agg_metrics.append(str_inline)
+        return '\t'.join(agg_metrics)

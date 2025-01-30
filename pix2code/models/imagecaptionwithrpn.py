@@ -528,8 +528,8 @@ class ROIHead(nn.Module):
         self.iou_threshold = 0.5  # roi_iou_threshold
         self.low_bg_iou = 0.0  # roi_low_bg_iou
         self.nms_threshold = 0.3  # roi_nms_threshold
-        self.topK_detections = 100  # roi_topk_detections
-        self.low_score_threshold = 0.05  # roi_score_threshold
+        self.topK_detections = 1  # roi_topk_detections
+        self.low_score_threshold = 0.01  # roi_score_threshold
         self.pool_size = 7  # roi_pool_size
         self.fc_inner_dim = 1024  # fc_inner_dim
         
@@ -682,9 +682,9 @@ class ROIHead(nn.Module):
             pred_labels = pred_labels.view(1, -1).expand_as(pred_scores)
             
             # remove predictions with the background label
-            pred_boxes = pred_boxes[:, 1:]
-            pred_scores = pred_scores[:, 1:]
-            pred_labels = pred_labels[:, 1:]
+            pred_boxes = pred_boxes[:, 8:]
+            pred_scores = pred_scores[:, 8:]
+            pred_labels = pred_labels[:, 8:]
             
             # pred_boxes -> (number_proposals, num_classes-1, 4)
             # pred_scores -> (number_proposals, num_classes-1)
@@ -695,6 +695,10 @@ class ROIHead(nn.Module):
             pred_scores = pred_scores.reshape(-1)
             pred_labels = pred_labels.reshape(-1)
             
+            # print(pred_boxes)
+            # print(pred_scores)
+            # print(pred_labels)
+
             pred_boxes, pred_labels, pred_scores = self.filter_predictions(pred_boxes, pred_labels, pred_scores)
             frcnn_output['boxes'] = pred_boxes
             frcnn_output['scores'] = pred_scores
@@ -718,7 +722,7 @@ class ROIHead(nn.Module):
         pred_boxes, pred_scores, pred_labels = pred_boxes[keep], pred_scores[keep], pred_labels[keep]
         
         # Remove small boxes
-        min_size = 16
+        min_size = 4
         ws, hs = pred_boxes[:, 2] - pred_boxes[:, 0], pred_boxes[:, 3] - pred_boxes[:, 1]
         keep = (ws >= min_size) & (hs >= min_size)
         keep = torch.where(keep)[0]
@@ -964,11 +968,18 @@ class DecoderWithAttention(nn.Module):
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
         # then generate a new word in the decoder with the previous word and the attention weighted encoding
 
-        count = 0
-        rpn_classification_loss = 0
-        rpn_localization_loss = 0
-        frcnn_classification_loss = 0
-        frcnn_localization_loss = 0
+        if self.training:
+            count = 0
+            rpn_classification_loss = 0
+            rpn_localization_loss = 0
+            frcnn_classification_loss = 0
+            frcnn_localization_loss = 0
+        else:
+            preds_box = []
+            truth_box = []
+            preds_lbl = []
+            truth_lbl = []
+            scores_lbl = []
 
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
@@ -983,17 +994,26 @@ class DecoderWithAttention(nn.Module):
                 if decode_lengths[bi] == t + 1:
                     continue
                 rpn_outs = self.rpn(images[bi].unsqueeze(0), feats[bi].unsqueeze(0), boxs[bi, t + 1, :].unsqueeze(0))
-                rpn_classification_loss += rpn_outs["rpn_classification_loss"].item()
-                rpn_localization_loss += rpn_outs["rpn_localization_loss"].item()
+                if self.training:
+                    rpn_classification_loss += rpn_outs["rpn_classification_loss"].item()
+                    rpn_localization_loss += rpn_outs["rpn_localization_loss"].item()
+                # print(rpn_outs)
 
                 frcnn_output = self.roi_head(feats[bi].unsqueeze(0), rpn_outs['proposals'], images.shape[-2:], 
                                              boxs[bi, t + 1, :].unsqueeze(0), encoded_captions[bi, t + 1].unsqueeze(0))
                 # print(frcnn_output)
 
-                frcnn_classification_loss += frcnn_output["frcnn_classification_loss"].item()
-                frcnn_localization_loss += frcnn_output["frcnn_localization_loss"].item()
+                if self.training:
+                    frcnn_classification_loss += frcnn_output["frcnn_classification_loss"].item()
+                    frcnn_localization_loss += frcnn_output["frcnn_localization_loss"].item()
 
-                count += 1
+                    count += 1
+                else:
+                    preds_box.append(frcnn_output["boxes"][0])
+                    truth_box.append(boxs[bi, t + 1, :])
+                    preds_lbl.append(frcnn_output["labels"][0])
+                    truth_lbl.append(encoded_captions[bi, t + 1])
+                    scores_lbl.append(frcnn_output["scores"][0])
                 # assert False
 
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
@@ -1018,14 +1038,17 @@ class DecoderWithAttention(nn.Module):
             # preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
             alphas[:batch_size_t, t, :] = alpha
 
-        rpn_classification_loss /= count
-        rpn_localization_loss /= count
-        frcnn_classification_loss /= count
-        frcnn_localization_loss /= count
+        if self.training:
+            rpn_classification_loss /= count
+            rpn_localization_loss /= count
+            frcnn_classification_loss /= count
+            frcnn_localization_loss /= count
 
-        # return preds_cls, preds_box, preds_equ, preds_ign, encoded_captions, decode_lengths, alphas, sort_ind
-        # return preds_cls, preds_box, encoded_captions, decode_lengths, alphas, sort_ind
-        return preds_cls, encoded_captions, decode_lengths, alphas, sort_ind, rpn_classification_loss, rpn_localization_loss, frcnn_classification_loss, frcnn_localization_loss
+            # return preds_cls, preds_box, preds_equ, preds_ign, encoded_captions, decode_lengths, alphas, sort_ind
+            # return preds_cls, preds_box, encoded_captions, decode_lengths, alphas, sort_ind
+            return preds_cls, encoded_captions, decode_lengths, alphas, sort_ind, rpn_classification_loss, rpn_localization_loss, frcnn_classification_loss, frcnn_localization_loss
+        else:
+            return preds_cls, encoded_captions, decode_lengths, alphas, sort_ind, preds_box, truth_box, preds_lbl, truth_lbl, scores_lbl
 
 
 class ImageCaptionWithRpn(nn.Module):
@@ -1063,84 +1086,104 @@ class ImageCaptionWithRpn(nn.Module):
         feats = self.encoder(imgs)  # [batch_size, 14, 14, 2048]
         # print(feats.shape)
 
-        # preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
-        #     self.decoder(imgs, caps, caplens)
-        preds_cls, caps_sorted, decode_lengths, alphas, sort_ind, l1, l2, l3, l4 = self.decoder(imgs, feats, caps, caplens, boxs, pivs)
+       
+    
+        if self.training:
+            # preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
+            #     self.decoder(imgs, caps, caplens)
+            preds_cls, caps_sorted, decode_lengths, alphas, sort_ind, l1, l2, l3, l4 = self.decoder(imgs, feats, caps, caplens, boxs, pivs)
 
-        # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        truth_cls = caps_sorted[:, 1:].clone()
-        truth_cls[truth_cls == 4] = -1
-        truth_cls[truth_cls > 0] = 1 
-        truth_cls[truth_cls == -1] = 0
+            # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
+            truth_cls = caps_sorted[:, 1:].clone()
+            truth_cls[truth_cls == 4] = -1
+            truth_cls[truth_cls > 0] = 1 
+            truth_cls[truth_cls == -1] = 0
 
-        # print(preds_cls)
-        # truth_box = boxs[sort_ind, 1:]
-        # truth_equ = equs[sort_ind, 1:]
-        # truth_ign = igns[sort_ind, 1:]
+            # print(preds_cls)
+            # truth_box = boxs[sort_ind, 1:]
+            # truth_equ = equs[sort_ind, 1:]
+            # truth_ign = igns[sort_ind, 1:]
 
-        # Remove timesteps that we didn't decode at, or are pads
-        # pack_padded_sequence is an easy trick to do this
-        # preds_cls = nn.utils.rnn.pack_padded_sequence(preds_cls, decode_lengths, batch_first=True).data
-        # truth_cls = nn.utils.rnn.pack_padded_sequence(truth_cls, decode_lengths, batch_first=True).data
+            # Remove timesteps that we didn't decode at, or are pads
+            # pack_padded_sequence is an easy trick to do this
+            # preds_cls = nn.utils.rnn.pack_padded_sequence(preds_cls, decode_lengths, batch_first=True).data
+            # truth_cls = nn.utils.rnn.pack_padded_sequence(truth_cls, decode_lengths, batch_first=True).data
 
-        loss_cls = torch.nn.functional.binary_cross_entropy_with_logits(preds_cls.flatten(), truth_cls.flatten().float())
+            loss_cls = torch.nn.functional.binary_cross_entropy_with_logits(preds_cls.flatten(), truth_cls.flatten().float())
 
-        # Calculate loss
-        # loss_cls = self.criterion_cls(preds_cls, truth_cls)
+            # Calculate loss
+            # loss_cls = self.criterion_cls(preds_cls, truth_cls)
 
-        # Add doubly stochastic attention regularization
-        loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
-        # loss_cls = 0
+            # Add doubly stochastic attention regularization
+            loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+            # loss_cls = 0
 
-        #
-        # preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
-        # truth_equ = nn.utils.rnn.pack_padded_sequence(truth_equ, decode_lengths, batch_first=True).data
+            #
+            # preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
+            # truth_equ = nn.utils.rnn.pack_padded_sequence(truth_equ, decode_lengths, batch_first=True).data
 
-        # loss_equ = self.criterion_equ(preds_equ.squeeze(), truth_equ)
+            # loss_equ = self.criterion_equ(preds_equ.squeeze(), truth_equ)
 
-        #
-        # preds_ign = nn.utils.rnn.pack_padded_sequence(preds_ign, decode_lengths, batch_first=True).data
-        # truth_ign = nn.utils.rnn.pack_padded_sequence(truth_ign, decode_lengths, batch_first=True).data
+            #
+            # preds_ign = nn.utils.rnn.pack_padded_sequence(preds_ign, decode_lengths, batch_first=True).data
+            # truth_ign = nn.utils.rnn.pack_padded_sequence(truth_ign, decode_lengths, batch_first=True).data
 
-        # loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
+            # loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
 
-        #
-        # preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
-        # truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
+            #
+            # preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
+            # truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
-        # # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
-        # box_masks = (truth_cls > 7)
+            # # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
+            # box_masks = (truth_cls > 7)
 
-        # preds_box = preds_box[box_masks]
-        # truth_box = truth_box[box_masks]
+            # preds_box = preds_box[box_masks]
+            # truth_box = truth_box[box_masks]
 
-        # preds_box = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
-        # truth_box = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
+            # preds_box = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
+            # truth_box = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
 
-        # loss_box = self.criterion_box(preds_box, truth_box, reduction="mean")
+            # loss_box = self.criterion_box(preds_box, truth_box, reduction="mean")
 
-        #
-        # loss = loss_cls + loss_equ + loss_ign + loss_box
-        # p1 = 0.5 * torch.exp(-self.log_vars[0])
-        # p2 = 0.5 * torch.exp(-self.log_vars[1])
-        # p3 = 0.5 * torch.exp(-self.log_vars[2])
-        # ps = 0.5 * torch.exp(-self.log_vars)
-        # pa = torch.sum(ps)
-        # loss = ps[0] * loss_cls + ps[1] * l1 + ps[2] * l2 + ps[3] * l3 + ps[4] * l4 + pa
+            #
+            # loss = loss_cls + loss_equ + loss_ign + loss_box
+            # p1 = 0.5 * torch.exp(-self.log_vars[0])
+            # p2 = 0.5 * torch.exp(-self.log_vars[1])
+            # p3 = 0.5 * torch.exp(-self.log_vars[2])
+            # ps = 0.5 * torch.exp(-self.log_vars)
+            # pa = torch.sum(ps)
+            # loss = ps[0] * loss_cls + ps[1] * l1 + ps[2] * l2 + ps[3] * l3 + ps[4] * l4 + pa
 
-        loss = loss_cls + l1 + l2 + l3 + l4
+            loss = loss_cls + l1 + l2 + l3 + l4
 
-        return {
-            "loss": loss, 
-            "loss/cls": loss_cls,
-            # "loss/equ": loss_equ,
-            # "loss/ign": loss_ign,
-            "loss/bcls": l1,
-            "loss/bbox": l2,
-            "loss/rcls": l3,
-            "loss/rbox": l4,
-            # "scores": preds_cls,  
-            # "targets": truth_cls,
-            # "preds_box": preds_box,
-            # "truth_box": truth_box
-        }
+            return {
+                "loss": loss, 
+                "loss/cls": loss_cls,
+                # "loss/equ": loss_equ,
+                # "loss/ign": loss_ign,
+                "loss/bcls": l1,
+                "loss/bbox": l2,
+                "loss/rcls": l3,
+                "loss/rbox": l4,
+                # "scores": preds_cls,  
+                # "targets": truth_cls,
+                # "preds_box": preds_box,
+                # "truth_box": truth_box
+            }
+        else:
+            preds_cls, caps_sorted, decode_lengths, alphas, sort_ind, preds_box, truth_box, preds_lbl, truth_lbl, scores_lbl = self.decoder(imgs, feats, caps, caplens, boxs, pivs)
+
+            truth_cls = caps_sorted[:, 1:].clone()
+            truth_cls[truth_cls == 4] = -1
+            truth_cls[truth_cls > 0] = 1 
+            truth_cls[truth_cls == -1] = 0
+
+            return {
+                "preds_cls": preds_cls.flatten(),
+                "truth_cls": truth_cls.flatten(),
+                "preds_box": torch.stack(preds_box),
+                "truth_box": torch.stack(truth_box),
+                "preds_lbl": torch.Tensor(preds_lbl),
+                "truth_lbl": torch.Tensor(truth_lbl),
+                "scores_lbl": scores_lbl
+            }
