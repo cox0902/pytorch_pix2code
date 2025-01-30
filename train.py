@@ -115,19 +115,19 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         return t.get_inner_model().resnet
 
 
-def check_model(model: str) -> bool:
+def check_model(model: str) -> Tuple[bool, bool]:
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
-        return False
+        return False, False
     elif model_name == "imagecaption":
-        return False
+        return False, False
     elif model_name in ["imagecaptionwithbox", "icwb"]:
-        return True
+        return True, True
     elif model_name in ["imagecaptionwithrpn", "icwr"]:
-        return True
+        return True, False
     else:
-        return False
+        return False, False
 
 
 def build_model(model: str, model_resnet: str, max_len: int):
@@ -158,7 +158,7 @@ def main(args):
 
     #
 
-    has_rect = check_model(args.model)
+    has_rect, norm_rect = check_model(args.model)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
@@ -172,7 +172,7 @@ def main(args):
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
                                  has_comma=has_comma, has_rect=has_rect)
-    
+    train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
@@ -180,7 +180,7 @@ def main(args):
     if split_valid is not None:
         valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
                                     has_comma=has_comma, has_rect=has_rect)
-    
+        valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
         valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     else:
@@ -235,7 +235,7 @@ def main(args):
         print("=" * 100)
         test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
                                     has_comma=has_comma, has_rect=has_rect)
-    
+        test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
         

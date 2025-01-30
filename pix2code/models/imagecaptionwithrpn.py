@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torchvision
+import numpy as np
 
 
 def apply_regression_pred_to_anchors_or_proposals(box_transform_pred, anchors_or_proposals):
@@ -468,6 +469,11 @@ class RegionProposalNetwork(nn.Module):
             # matched_gt_boxes_for_anchors -> (Number of anchors in image, 4)
             # anchors -> (Number of anchors in image, 4)
             regression_targets = boxes_to_transformation_targets(matched_gt_boxes_for_anchors, anchors)
+
+            if torch.isnan(regression_targets).any():
+                # torch.set_printoptions(profile="full")
+                np.savez("dumps.npz", a=matched_gt_boxes_for_anchors.detach().numpy(), b=anchors.detach().numpy())
+                assert False
             
             ####### Sampling positive and negative anchors ####
             # Our labels were {fg:1, bg:0, to_be_ignored:-1}
@@ -488,9 +494,15 @@ class RegionProposalNetwork(nn.Module):
                     / (sampled_idxs.numel())
             ) 
 
-            torch.set_printoptions(profile="full")
-            print("cs:", cls_scores[sampled_idxs].flatten())
-            print("la:", labels_for_anchors[sampled_idxs].flatten())
+            if torch.isnan(localization_loss):
+                torch.set_printoptions(profile="full")
+                print(box_transform_pred[sampled_pos_idx_mask])
+                print(regression_targets[sampled_pos_idx_mask])
+                assert False
+
+            # torch.set_printoptions(profile="full")
+            # print("cs:", cls_scores[sampled_idxs].flatten())
+            # print("la:", labels_for_anchors[sampled_idxs].flatten())
 
             cls_loss = torch.nn.functional.binary_cross_entropy_with_logits(cls_scores[sampled_idxs].flatten(),
                                                                             labels_for_anchors[sampled_idxs].flatten())
@@ -1112,19 +1124,19 @@ class ImageCaptionWithRpn(nn.Module):
         # p1 = 0.5 * torch.exp(-self.log_vars[0])
         # p2 = 0.5 * torch.exp(-self.log_vars[1])
         # p3 = 0.5 * torch.exp(-self.log_vars[2])
-        ps = 0.5 * torch.exp(-self.log_vars)
-        pa = torch.sum(ps)
-        loss = ps[0] * loss_cls + ps[1] * l1 + ps[2] * l2 + ps[3] * l3 + ps[4] * l4 + pa
+        # ps = 0.5 * torch.exp(-self.log_vars)
+        # pa = torch.sum(ps)
+        # loss = ps[0] * loss_cls + ps[1] * l1 + ps[2] * l2 + ps[3] * l3 + ps[4] * l4 + pa
 
-        # loss = loss_cls + l1 + l2 + l3 + l4
+        loss = loss_cls + l1 + l2 + l3 + l4
 
         return {
             "loss": loss, 
             "loss/cls": loss_cls,
             # "loss/equ": loss_equ,
             # "loss/ign": loss_ign,
-            "loss/bbox": l1,
-            "loss/bcls": l2,
+            "loss/bcls": l1,
+            "loss/bbox": l2,
             "loss/rcls": l3,
             "loss/rbox": l4,
             # "scores": preds_cls,  
