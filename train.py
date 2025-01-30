@@ -252,7 +252,7 @@ def main(args):
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
         
         trainer = Trainer.load_checkpoint("./BEST.pth.tar")
-        _ = trainer.test(data_loader=test_loader, metrics=metrics, proof_of_concept=args.proof_of_concept)
+        _ = trainer.test(data_loader=test_loader, metrics=eval_metrics, proof_of_concept=args.proof_of_concept)
 
 
 if __name__ == "__main__":

@@ -283,9 +283,10 @@ class Trainer:
         model.eval()        
         metrics.reset(len(data_loader))
 
-        references = []
-        hypotheses = []
-        total_loss = 0
+        if type(metrics) == Metrics:
+            references = []
+            hypotheses = []
+            total_loss = 0
 
         print()
         with torch.no_grad():
@@ -300,22 +301,27 @@ class Trainer:
                 if i % self.print_freq == 0:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
-                references.extend(outputs["targets"])
-                hypotheses.extend(outputs["scores"])
+                if type(metrics) == Metrics:
+                    references.extend(outputs["targets"])
+                    hypotheses.extend(outputs["scores"])
 
                 if proof_of_concept:
                     break
 
             print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
-            total_loss = metrics.loss.avg
+            if type(metrics) == Metrics:
+                total_loss = metrics.loss.avg
 
-            hypotheses = torch.stack(hypotheses)
-            references = torch.stack(references)
-            metrics.reset(len(data_loader))
-            metrics.update({ "scores": hypotheses, "targets": references })
-            print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
+                hypotheses = torch.stack(hypotheses)
+                references = torch.stack(references)
+                metrics.reset(len(data_loader))
+                metrics.update({ "scores": hypotheses, "targets": references })
+                print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
-        return metrics.compute(hypotheses, references), total_loss
+        if type(metrics) == Metrics:
+            return metrics.compute(hypotheses, references), total_loss
+        else:
+            return metrics.compute(), 0
     
     def test(self, data_loader: DataLoader, metrics: Metrics, hook: Optional[str] = None, 
              name_refs = "targets", name_hyps = "scores",
@@ -352,26 +358,31 @@ class Trainer:
                 else:
                     outputs = model(batch)
                
-                metrics.update()  # 
+                if type(metrics) == Metrics:
+                    metrics.update()  # 
+                else:
+                    metrics.update(outputs)
 
                 if i % self.print_freq == 0:
                     print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
 
-                references.extend(outputs[name_refs])
-                hypotheses.extend(outputs[name_hyps])
+                if type(metrics) == Metrics:
+                    references.extend(outputs[name_refs])
+                    hypotheses.extend(outputs[name_hyps])
 
                 if proof_of_concept:
                     break
 
             print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
             
-            hypotheses = torch.stack(hypotheses)
-            references = torch.stack(references)
-            metrics.reset(len(data_loader))
-            metrics.update({ "scores": hypotheses, "targets": references })
-            print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
+            if type(metrics) == Metrics:
+                hypotheses = torch.stack(hypotheses)
+                references = torch.stack(references)
+                metrics.reset(len(data_loader))
+                metrics.update({ "scores": hypotheses, "targets": references })
+                print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
-            metrics.compute(hypotheses, references)
+                metrics.compute(hypotheses, references)
 
         if hook is None:
             return hypotheses, references, None

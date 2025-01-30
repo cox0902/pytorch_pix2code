@@ -300,6 +300,9 @@ class MapScorer(Scorer):
         }]
         self.scorer.update(in_preds, in_target)
 
+    def compute(self):
+        return self.scorer.compute()["map"]
+
 
 class AdvMetrics:
 
