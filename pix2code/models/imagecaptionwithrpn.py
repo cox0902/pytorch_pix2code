@@ -488,6 +488,10 @@ class RegionProposalNetwork(nn.Module):
                     / (sampled_idxs.numel())
             ) 
 
+            torch.set_printoptions(profile="full")
+            print("cs:", cls_scores[sampled_idxs].flatten())
+            print("la:", labels_for_anchors[sampled_idxs].flatten())
+
             cls_loss = torch.nn.functional.binary_cross_entropy_with_logits(cls_scores[sampled_idxs].flatten(),
                                                                             labels_for_anchors[sampled_idxs].flatten())
 
