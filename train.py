@@ -22,7 +22,7 @@ from pix2code.metrics import (
 )
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, Detr
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk
 
 
 def get_args_parser() -> argparse.ArgumentParser:
