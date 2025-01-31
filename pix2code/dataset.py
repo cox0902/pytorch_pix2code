@@ -25,7 +25,7 @@ class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
                  label_trans = None,
-                 has_comma: bool = True, has_rect: bool = False):
+                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
@@ -35,6 +35,7 @@ class ImageCodeDataset(Dataset):
         assert not (has_comma and has_rect)
         self.has_comma = has_comma
         self.has_rect = has_rect
+        self.mask_rect = mask_rect
         self.normalize_rect = True
         
         self.hi = h5py.File(image_path, "r")
@@ -107,23 +108,43 @@ class ImageCodeDataset(Dataset):
             }
         if self.has_rect:
             #
-            rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
-            ids = self.ids[code_idx]
-            ivs = self.codes[code_idx]
-            for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
-                if each_iv <= 7:
-                    continue
-                loc = np.where(np.logical_and(
-                    self.labels[:, 0] == img_idx,
-                    self.labels[:, 1] == each_id
-                ))
-                assert len(loc[0]) == 1, item["code"]
-                rects[i] = self.rects[loc[0]]
-            if self.normalize_rect:
-                item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+            if not self.mask_rect:
+                rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
+                ids = self.ids[code_idx]
+                ivs = self.codes[code_idx]
+                for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
+                    if each_iv <= 7:
+                        continue
+                    loc = np.where(np.logical_and(
+                        self.labels[:, 0] == img_idx,
+                        self.labels[:, 1] == each_id
+                    ))
+                    assert len(loc[0]) == 1, item["code"]
+                    rects[i] = self.rects[loc[0]]
+                if self.normalize_rect:
+                    item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+                else:
+                    item["rect"] = rects
             else:
-                item["rect"] = rects
+                masks = np.zeros((code.shape[0], 256, 256), dtype=np.float32)
+                ids = self.ids[code_idx]
+                ivs = self.codes[code_idx]
+                for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
+                    if each_iv <= 7:
+                        continue
+                    loc = np.where(np.logical_and(
+                        self.labels[:, 0] == img_idx,
+                        self.labels[:, 1] == each_id
+                    ))
+                    assert len(loc[0]) == 1, item["code"]
+                    rect = self.rects[loc[0]]
+                    
+                    mask = Image.new("L", (image.size(1), image.size(2)), 0)
+                    mask_draw = ImageDraw.Draw(mask)
+                    mask_draw.rectangle(rect, fill=255)
 
+                    masks[i] = torch.FloatTensor(np.asarray(mask) / 255.)
+                item["mask"] = masks
             #
             if self.is_short:
                 mask = Image.new("L", (image.size(1), image.size(2)), 0)

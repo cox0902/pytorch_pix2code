@@ -16,10 +16,13 @@ from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC, BinaryAccurac
 
 from pix2code.utils import seed_everything
 from pix2code.trainer import Trainer
-from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer, MapScorer
+from pix2code.metrics import (
+    SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer, MapScorer,
+    MaskIouCompoundScorer, MaskIouScorer
+)
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, Detr
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, ImageCaptionWithMsk, Detr
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -118,18 +121,21 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
 
 
 def check_model(model: str) -> Tuple[bool, bool]:
+    # returns (has_rect, norm_rect, mask_rect)
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
-        return False, False
+        return False, False, False
     elif model_name == "imagecaption":
-        return False, False
+        return False, False, False
     elif model_name in ["imagecaptionwithbox", "icwb"]:
-        return True, True
+        return True, True, False
     elif model_name in ["imagecaptionwithrpn", "icwr"]:
-        return True, False
+        return True, False, False
+    elif model_name in ["imagecaptionwithmsk", "icwm"]:
+        return True, False, True
     else:
-        return False, False
+        return False, False, False
 
 
 def build_model(model: str, model_resnet: str, max_len: int):
@@ -148,6 +154,10 @@ def build_model(model: str, model_resnet: str, max_len: int):
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent)
+    elif model_name in ["imagecaptionwithmsk", "icwm"]:
+        resnet = build_resnet_model(model_resnet)
+        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
+        return ImageCaptionWithMsk(resnet, vocab_size=90, embed_parent=embed_parent)
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()
@@ -160,7 +170,7 @@ def main(args):
 
     #
 
-    has_rect, norm_rect = check_model(args.model)
+    has_rect, norm_rect, mask_rect = check_model(args.model)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
@@ -173,7 +183,7 @@ def main(args):
     has_comma = (not args.no_comma)
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
-                                 has_comma=has_comma, has_rect=has_rect)
+                                 has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
@@ -181,7 +191,7 @@ def main(args):
         
     if split_valid is not None:
         valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                    has_comma=has_comma, has_rect=has_rect)
+                                    has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
         valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
@@ -239,6 +249,16 @@ def main(args):
                 SimpleMetricScorer("LBL_ACC", MulticlassAccuracy(num_classes=90), "preds_lbl", "truth_lbl"),
                 MapScorer()
             ])
+        elif args.eval_metric == "mics":
+            eval_metrics = AdvMetrics([
+                MaskIouCompoundScorer()
+            ])
+        elif args.eval_metric == "mis+acc+auc":
+            eval_metrics = AdvMetrics([
+                MaskIouScorer(),
+                SimpleMetricScorer("acc", MulticlassAccuracy(num_classes=90), "scores", "targets"),
+                SimpleMetricScorer("auc", MulticlassAUROC(num_classes=90), "scores", "targets"),
+            ])
 
     trainer.fit(epochs=args.epochs, train_loader=train_loader, valid_loader=valid_loader, 
                 metrics=metrics, eval_metrics=eval_metrics, proof_of_concept=args.proof_of_concept)
@@ -246,7 +266,7 @@ def main(args):
     if split_test is not None:
         print("=" * 100)
         test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
-                                    has_comma=has_comma, has_rect=has_rect)
+                                    has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
         test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)

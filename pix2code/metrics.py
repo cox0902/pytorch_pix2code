@@ -1,6 +1,7 @@
-from typing import List, Tuple, Any, Dict, Type
+from typing import *
 
 import time
+import warnings 
 from collections import deque
 from datetime import timedelta
 from tabulate import tabulate
@@ -266,6 +267,32 @@ class Scorer:
 
     def compute(self):
         return self.scorer.compute()
+    
+    def format(self):
+        return [_format_named_value(self.name, self.compute(), precision=5)]
+
+
+class CompoundScorer(Scorer):
+
+    def __init__(self):
+        self.scorers = []
+
+    def reset(self):
+        for each in self.scorers:
+            each.reset()
+    
+    def update(self, outputs):
+        for each in self.scorers:
+            each.update(outputs)
+
+    def compute(self):
+        sum_score = 0
+        for each in self.scorers:
+            sum_score += each.compute()
+        return sum_score
+    
+    def format(self):
+        return [each.format() for each in self.scorers]
 
 
 class SimpleMetricScorer(Scorer):
@@ -302,6 +329,184 @@ class MapScorer(Scorer):
 
     def compute(self):
         return self.scorer.compute()["map"]
+
+
+def _handle_zero_division(x, zero_division):
+    nans = torch.isnan(x)
+    if torch.any(nans) and zero_division == "warn":
+        warnings.warn("Zero division in metric calculation!")
+    value = zero_division if zero_division != "warn" else 0
+    value = torch.tensor(value, dtype=x.dtype).to(x.device)
+    x = torch.where(nans, value, x)
+    return x
+
+
+def _iou_score(tp, fp, fn, tn):
+    return tp / (tp + fp + fn)
+
+
+def _get_stats_multilabel(
+    output: torch.LongTensor, target: torch.LongTensor
+) -> Tuple[torch.LongTensor, torch.LongTensor, torch.LongTensor, torch.LongTensor]:
+    batch_size, num_classes, *dims = target.shape
+    output = output.view(batch_size, num_classes, -1)
+    target = target.view(batch_size, num_classes, -1)
+
+    tp = (output * target).sum(2)
+    fp = output.sum(2) - tp
+    fn = target.sum(2) - tp
+    tn = torch.prod(torch.tensor(dims)) - (tp + fp + fn)
+
+    return tp, fp, fn, tn
+
+
+def _compute_metric(
+    metric_fn,
+    tp,
+    fp,
+    fn,
+    tn,
+    reduction: Optional[str] = None,
+    class_weights: Optional[List[float]] = None,
+    zero_division="warn",
+    **metric_kwargs,
+) -> float:
+    if class_weights is None and reduction is not None and "weighted" in reduction:
+        raise ValueError(
+            f"Class weights should be provided for `{reduction}` reduction"
+        )
+
+    class_weights = class_weights if class_weights is not None else 1.0
+    class_weights = torch.tensor(class_weights).to(tp.device)
+    class_weights = class_weights / class_weights.sum()
+
+    if reduction == "micro":
+        tp = tp.sum()
+        fp = fp.sum()
+        fn = fn.sum()
+        tn = tn.sum()
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+
+    elif reduction == "macro":
+        tp = tp.sum(0)
+        fp = fp.sum(0)
+        fn = fn.sum(0)
+        tn = tn.sum(0)
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+        score = _handle_zero_division(score, zero_division)
+        score = (score * class_weights).mean()
+
+    elif reduction == "weighted":
+        tp = tp.sum(0)
+        fp = fp.sum(0)
+        fn = fn.sum(0)
+        tn = tn.sum(0)
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+        score = _handle_zero_division(score, zero_division)
+        score = (score * class_weights).sum()
+
+    elif reduction == "micro-imagewise":
+        tp = tp.sum(1)
+        fp = fp.sum(1)
+        fn = fn.sum(1)
+        tn = tn.sum(1)
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+        score = _handle_zero_division(score, zero_division)
+        score = score.mean()
+
+    elif reduction == "macro-imagewise" or reduction == "weighted-imagewise":
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+        score = _handle_zero_division(score, zero_division)
+        score = (score.mean(0) * class_weights).mean()
+
+    elif reduction == "none" or reduction is None:
+        score = metric_fn(tp, fp, fn, tn, **metric_kwargs)
+        score = _handle_zero_division(score, zero_division)
+
+    else:
+        raise ValueError(
+            "`reduction` should be in [micro, macro, weighted, micro-imagewise,"
+            + "macro-imagesize, weighted-imagewise, none, None]"
+        )
+
+    return score
+
+
+class MaskIouScorer(Scorer):
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.tp = []
+        self.fp = []
+        self.fn = []
+        self.tn = []
+
+    def update(self, outputs):
+        prob_mask = outputs["preds_box"].sigmoid()
+        pred_mask = (prob_mask > 0.5).float()
+
+        tp, fp, fn, tn = _get_stats_multilabel(pred_mask.long(), outputs["truth_box"].long())
+        self.tp.append(tp)
+        self.fp.append(fp)
+        self.fn.append(fn)
+        self.tn.append(tn)
+    
+    def compute_iou(self, reduction):
+        tp = torch.cat(self.tp)
+        fp = torch.cat(self.fp)
+        fn = torch.cat(self.fn)
+        tn = torch.cat(self.tn)
+        return _compute_metric(_iou_score, tp=tp, fp=fp, fn=fn, tn=tn, reduction=reduction)
+
+    def compute(self):
+        return self.compute_iou("micro")
+    
+    def format(self):
+        return [
+            _format_named_value("iou", self.compute_iou("micro"), precision=5),
+        ]
+    
+
+class MaskIouCompoundScorer(Scorer):
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.tp = []
+        self.fp = []
+        self.fn = []
+        self.tn = []
+
+    def update(self, outputs):
+        prob_mask = outputs["preds_box"].sigmoid()
+        pred_mask = (prob_mask > 0.5).float()
+
+        tp, fp, fn, tn = _get_stats_multilabel(pred_mask.long(), outputs["truth_box"].long())
+        self.tp.append(tp)
+        self.fp.append(fp)
+        self.fn.append(fn)
+        self.tn.append(tn)
+    
+    def compute_iou(self, reduction):
+        tp = torch.cat(self.tp)
+        fp = torch.cat(self.fp)
+        fn = torch.cat(self.fn)
+        tn = torch.cat(self.tn)
+        return _compute_metric(_iou_score, tp=tp, fp=fp, fn=fn, tn=tn, reduction=reduction)
+
+    def compute(self):
+        return self.compute_iou("micro-imagewise") + self.compute_iou("micro")
+    
+    def format(self):
+        return [
+            _format_named_value("iou_img", self.compute_iou("micro-imagewise"), precision=5),
+            _format_named_value("iou_all", self.compute_iou("micro"), precision=5)
+        ]
+
+    
 
 
 class AdvMetrics:
@@ -355,9 +560,9 @@ class AdvMetrics:
             for i, metric in enumerate(self.metrics):
                 if i % 5 == 0:
                     agg_metrics.append("\n")
-                str_inline = _format_named_value(metric.name, metric.compute(), precision=5)
+                # str_inline = _format_named_value(metric.name, metric.compute(), precision=5)
                 # str_inline = f'{metric["name"]} {metric["meter"].val:.5f}'
                 # if show_average:
                 #     str_inline += f' ({metric["meter"].avg:.5f})'
-                agg_metrics.append(str_inline)
+                agg_metrics.extend(metric.format())
         return '\t'.join(agg_metrics)

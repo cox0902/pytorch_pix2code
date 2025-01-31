@@ -928,7 +928,6 @@ class DecoderWithAttention(nn.Module):
 
         batch_size = encoder_out.size(0)
         encoder_dim = encoder_out.size(-1)
-        vocab_size = self.vocab_size
 
         # print(batch_size)
 
