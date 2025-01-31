@@ -22,7 +22,7 @@ from pix2code.metrics import (
 )
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithRpn, ImageCaptionWithMsk, Detr
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, Detr
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -151,6 +151,7 @@ def build_model(model: str, model_resnet: str, max_len: int):
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
     elif model_name in ["imagecaptionwithrpn", "icwr"]:
+        from pix2code.models import ImageCaptionWithRpn
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent)
