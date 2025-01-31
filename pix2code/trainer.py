@@ -215,8 +215,8 @@ class Trainer:
     
     def to_device(self, data: Dict) -> Dict:
         for k, v in data.items():
-            if k == "mask":  # TODO:
-                continue
+            # if k == "mask":  # TODO:
+            #     continue
             data[k] = v.to(self.device)
         return data
 

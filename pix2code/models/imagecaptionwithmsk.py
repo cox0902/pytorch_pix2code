@@ -441,11 +441,11 @@ class DecoderWithAttention(nn.Module):
         decode_lengths = (caption_lengths - 1).tolist()
 
         # Create tensors to hold word predicion scores and alphas
-        preds_cls = torch.zeros(batch_size, max(decode_lengths), self.vocab_size)  # .to(encoded_captions.device)
-        preds_box = torch.zeros(batch_size, max(decode_lengths), 256, 256)  # .to(encoded_captions.device)
+        preds_cls = torch.zeros(batch_size, max(decode_lengths), self.vocab_size).to(encoded_captions.device)
+        preds_box = torch.zeros(batch_size, max(decode_lengths), 256, 256).to(encoded_captions.device)
         # preds_equ = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
         # preds_ign = torch.zeros(batch_size, max(decode_lengths), 1).to(encoder_out.device)
-        alphas = torch.zeros(batch_size, max(decode_lengths), 64)  # .to(encoded_captions.device)
+        alphas = torch.zeros(batch_size, max(decode_lengths), 64).to(encoded_captions.device)
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -460,7 +460,7 @@ class DecoderWithAttention(nn.Module):
             awe5, aw5, alpha5 = self.att5(eo5[:batch_size_t], h[:batch_size_t])
             
             out = self.upnet(aw1, aw2, aw3, aw4, aw5)
-            preds_box[:batch_size_t, t, :, :] = out[:, 0, :, :].cpu()
+            preds_box[:batch_size_t, t, :, :] = out[:, 0, :, :]  # .cpu()
 
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * awe5
@@ -478,10 +478,10 @@ class DecoderWithAttention(nn.Module):
                     torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                     (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             h = self.dropout(h)
-            preds_cls[:batch_size_t, t, :] = self.fc_cls(h).cpu()  # (batch_size_t, vocab_size)
+            preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # .cpu()  # (batch_size_t, vocab_size)
             # preds_equ[:batch_size_t, t, :] = self.fc_equ(h)
             # preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
-            alphas[:batch_size_t, t, :] = alpha5.cpu()
+            alphas[:batch_size_t, t, :] = alpha5  # .cpu()
 
         # return preds_cls, preds_box, preds_equ, preds_ign, encoded_captions, decode_lengths, alphas, sort_ind
         return preds_cls, preds_box, encoded_captions, decode_lengths, alphas, sort_ind
@@ -523,8 +523,9 @@ class ImageCaptionWithMsk(nn.Module):
             encoded_imgs, caps, caplens, pivs)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        truth_cls = caps_sorted[:, 1:].cpu()
-        truth_box = masks[sort_ind.cpu(), 1:]
+        truth_cls = caps_sorted[:, 1:]  # .cpu()
+        # truth_box = masks[sort_ind.cpu(), 1:]
+        truth_box = masks[sort_ind, 1:]
         # truth_equ = equs[sort_ind, 1:]
         # truth_ign = igns[sort_ind, 1:]
 
@@ -579,14 +580,27 @@ class ImageCaptionWithMsk(nn.Module):
         p2 = 0.5 * torch.exp(-self.log_vars[1])
         loss = p1 * loss_cls + p2 * loss_box + self.log_vars[0] + self.log_vars[1]
 
-        return {
-            "loss": loss, 
-            "loss/cls": loss_cls,
-            # "loss/equ": loss_equ,
-            # "loss/ign": loss_ign,
-            "loss/box": loss_box,
-            "scores": preds_cls,  
-            "targets": truth_cls,
-            "preds_box": preds_box,
-            "truth_box": truth_box
-        }
+        if self.training:
+            return {
+                "loss": loss, 
+                "loss/cls": loss_cls,
+                # "loss/equ": loss_equ,
+                # "loss/ign": loss_ign,
+                "loss/box": loss_box,
+                # "scores": preds_cls,  
+                # "targets": truth_cls,
+                # "preds_box": preds_box,
+                # "truth_box": truth_box
+            }
+        else:
+            return {
+                "loss": loss, 
+                "loss/cls": loss_cls,
+                # "loss/equ": loss_equ,
+                # "loss/ign": loss_ign,
+                "loss/box": loss_box,
+                "scores": preds_cls,  
+                "targets": truth_cls,
+                "preds_box": preds_box,
+                "truth_box": truth_box
+            }
