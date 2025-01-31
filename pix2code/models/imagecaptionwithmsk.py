@@ -523,7 +523,7 @@ class ImageCaptionWithMsk(nn.Module):
             encoded_imgs, caps, caplens, pivs)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        truth_cls = caps_sorted[:, 1:]
+        truth_cls = caps_sorted[:, 1:].cpu()
         truth_box = masks[sort_ind, 1:]
         # truth_equ = equs[sort_ind, 1:]
         # truth_ign = igns[sort_ind, 1:]

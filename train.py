@@ -51,6 +51,7 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
+    parser.add_argument("--pin-memory", action="store_true")
     
     parser.add_argument("--grad-clip", action="store_true")
     parser.add_argument("--ema", action="store_true")
@@ -187,7 +188,7 @@ def main(args):
                                  has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True, 
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=args.pin_memory, 
                               num_workers=args.workers, worker_init_fn=seed_worker, generator=generator)
         
     if split_valid is not None:
@@ -195,7 +196,7 @@ def main(args):
                                     has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
-        valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+        valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=args.pin_memory)
     else:
         valid_loader = None
 
@@ -270,7 +271,7 @@ def main(args):
                                     has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
-        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
+        test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, pin_memory=args.pin_memory)
         
         trainer = Trainer.load_checkpoint("./BEST.pth.tar")
         _ = trainer.test(data_loader=test_loader, metrics=eval_metrics, proof_of_concept=args.proof_of_concept)
