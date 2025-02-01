@@ -257,6 +257,15 @@ class Encoder(nn.Module):
         x = self.body(images)
         return [x[str(k)] for k in range(5)]
 
+    def freeze(self):
+        """
+        Allow or prevent the computation of gradients for convolutional blocks 2 through 4 of the encoder.
+
+        :param fine_tune: Allow?
+        """
+        for p in self.body.parameters():
+            p.requires_grad = False
+        
 
 class Attention(nn.Module):
     """
@@ -493,11 +502,12 @@ class ImageCaptionWithMsk(nn.Module):
         super().__init__()
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
+        self.encoder.freeze()
         self.decoder = DecoderWithAttention(attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5,
+                                            dropout=0.2,
                                             embed_parent=embed_parent)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_dice = DiceLoss()

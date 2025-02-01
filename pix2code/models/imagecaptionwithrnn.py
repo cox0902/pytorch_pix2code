@@ -88,10 +88,21 @@ class Attention(nn.Module):
 
 class TokenDecoder(nn.Module):
 
-    def __init__(self, embed_dim, vocab_size, dropout=0.5, *args, **kwargs):
+    def __init__(self, embed_dim, encoder_dim, decoder_dim, vocab_size, dropout=0.2, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
+        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
+        self.init_weights()
+
+    def init_weights(self):
+        """
+        Initializes some parameters with values from the uniform distribution, for easier convergence.
+        """
+        self.embedding.weight.data.uniform_(-0.1, 0.1)
+        self.fc.bias.data.fill_(0)
+        self.fc.weight.data.uniform_(-0.1, 0.1)
 
     def forward(self):
         pass
@@ -271,7 +282,7 @@ class ImageCaption(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5)
+                                            dropout=0.2)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
