@@ -445,6 +445,7 @@ def _compute_metric(
 class MaskIouScorer(Scorer):
 
     def __init__(self):
+        self.name = "mis"
         self.reset()
 
     def reset(self):
@@ -485,6 +486,7 @@ registered_scores["mis"] = MaskIouScorer()
 class MaskIouCompoundScorer(Scorer):
 
     def __init__(self):
+        self.name = "mics"
         self.reset()
 
     def reset(self):
