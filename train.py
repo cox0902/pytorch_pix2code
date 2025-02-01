@@ -145,16 +145,16 @@ def build_model(model: str, model_resnet: str, max_len: int):
         return Pix2Code(vocab_size=90)
     elif model_name == "imagecaption":
         resnet = build_resnet_model(model_resnet)
-        return ImageCaption(resnet, vocab_size=90, **model_params.items())
+        return ImageCaption(resnet, vocab_size=90, **model_params)
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithBox(resnet, vocab_size=90, **model_params.items())
+        return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithRnn(resnet, vocab_size=90, **model_params.items())
+        return ImageCaptionWithRnn(resnet, vocab_size=90, **model_params)
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params.items())
+        return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()
