@@ -538,7 +538,7 @@ class ImageCaptionWithMsk(nn.Module):
         loss_cls = self.criterion_cls(preds_cls, truth_cls)
 
         # Add doubly stochastic attention regularization
-        loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+        # loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
 
         #
         # preds_equ = nn.utils.rnn.pack_padded_sequence(preds_equ, decode_lengths, batch_first=True).data
