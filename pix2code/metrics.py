@@ -338,7 +338,7 @@ class MapScorer(Scorer):
         return self.scorer.compute()["map"]
 
 
-registered_scores["map"] = MapScorer()
+# registered_scores["map"] = MapScorer()
 
 
 def _handle_zero_division(x, zero_division):

@@ -122,7 +122,10 @@ class TokenDecoder(nn.Module):
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
 
-
+            h, c = self.decode_step(
+                torch.cat([embeddings[:batch_size_t, t, :], encoder_out], dim=1),
+                (h[:batch_size_t], c[:batch_size_t]))
+            
 
 class DecoderWithAttention(nn.Module):
     """
