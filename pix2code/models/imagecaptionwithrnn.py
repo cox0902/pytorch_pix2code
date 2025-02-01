@@ -94,18 +94,34 @@ class TokenDecoder(nn.Module):
         self.dropout = nn.Dropout(p=self.dropout)
         self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
+        self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+        self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         self.init_weights()
 
     def init_weights(self):
-        """
-        Initializes some parameters with values from the uniform distribution, for easier convergence.
-        """
         self.embedding.weight.data.uniform_(-0.1, 0.1)
         self.fc.bias.data.fill_(0)
         self.fc.weight.data.uniform_(-0.1, 0.1)
 
-    def forward(self):
-        pass
+    def init_hidden_state(self, encoder_out):
+        h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
+        c = self.init_c(encoder_out)
+        return h, c
+    
+    def forward(self, encoder_out, targets, target_lengths):
+        
+        target_lengths, sort_ind = target_lengths.sort(dim=0, descending=True)
+        targets = targets[sort_ind]  # (batch_size, seq_len)
+
+        h, c = self.init_hidden_state(encoder_out)
+
+        embeddings = self.embedding(targets)
+
+        decode_lengths = (target_lengths - 1).tolist()
+
+        for t in range(max(decode_lengths)):
+            batch_size_t = sum([l > t for l in decode_lengths])
+
 
 
 class DecoderWithAttention(nn.Module):

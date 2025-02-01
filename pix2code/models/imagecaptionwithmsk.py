@@ -498,8 +498,9 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithMsk(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, embed_parent: str = None):
+    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None):
         super().__init__()
+        self.mix = mix if mix is not None else "all"
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
         self.encoder.freeze()
@@ -513,7 +514,8 @@ class ImageCaptionWithMsk(nn.Module):
         self.criterion_dice = DiceLoss()
         self.criterion_bcls = nn.BCEWithLogitsLoss()
         # self.criterion_ign = nn.BCEWithLogitsLoss()
-        self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
+        if self.mix == "all":
+            self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
         
     def forward(self, batch):
         imgs = batch["image"]
@@ -532,20 +534,20 @@ class ImageCaptionWithMsk(nn.Module):
         preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
             encoded_imgs, caps, caplens, pivs)
 
-        # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        truth_cls = caps_sorted[:, 1:]  # .cpu()
-        # truth_box = masks[sort_ind.cpu(), 1:]
-        truth_box = masks[sort_ind, 1:]
-        # truth_equ = equs[sort_ind, 1:]
-        # truth_ign = igns[sort_ind, 1:]
+        if self.mix in ["all", "cls"]:
+            # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
+            truth_cls = caps_sorted[:, 1:]  # .cpu()
+            # truth_box = masks[sort_ind.cpu(), 1:]
+            # truth_equ = equs[sort_ind, 1:]
+            # truth_ign = igns[sort_ind, 1:]
 
-        # Remove timesteps that we didn't decode at, or are pads
-        # pack_padded_sequence is an easy trick to do this
-        preds_cls = nn.utils.rnn.pack_padded_sequence(preds_cls, decode_lengths, batch_first=True).data
-        truth_cls = nn.utils.rnn.pack_padded_sequence(truth_cls, decode_lengths, batch_first=True).data
+            # Remove timesteps that we didn't decode at, or are pads
+            # pack_padded_sequence is an easy trick to do this
+            preds_cls = nn.utils.rnn.pack_padded_sequence(preds_cls, decode_lengths, batch_first=True).data
+            truth_cls = nn.utils.rnn.pack_padded_sequence(truth_cls, decode_lengths, batch_first=True).data
 
-        # Calculate loss
-        loss_cls = self.criterion_cls(preds_cls, truth_cls)
+            # Calculate loss
+            loss_cls = self.criterion_cls(preds_cls, truth_cls)
 
         # Add doubly stochastic attention regularization
         # loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
@@ -562,16 +564,19 @@ class ImageCaptionWithMsk(nn.Module):
 
         # loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
 
-        #
-        preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
-        truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
+        if self.mix in ["all", "box"]:
+            truth_box = masks[sort_ind, 1:]
 
-        # print(preds_box.shape)
-        # print(truth_box.shape)
+            #
+            preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
+            truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
-        loss_dice = self.criterion_dice(preds_box, truth_box)
-        loss_bcls = self.criterion_bcls(preds_box, truth_box)
-        loss_box = 0.8 * loss_bcls + 0.2 * loss_dice
+            # print(preds_box.shape)
+            # print(truth_box.shape)
+
+            loss_dice = self.criterion_dice(preds_box, truth_box)
+            loss_bcls = self.criterion_bcls(preds_box, truth_box)
+            loss_box = 0.8 * loss_bcls + 0.2 * loss_dice
 
         # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
         # box_masks = (truth_cls > 7)
@@ -586,31 +591,26 @@ class ImageCaptionWithMsk(nn.Module):
 
         #
         # loss = loss_cls + loss_equ + loss_ign + loss_box
-        p1 = 0.5 * torch.exp(-self.log_vars[0])
-        p2 = 0.5 * torch.exp(-self.log_vars[1])
-        loss = p1 * loss_cls + p2 * loss_box + self.log_vars[0] + self.log_vars[1]
+        return_dict = {}
+
+        if self.mix == "all":
+            p1 = 0.5 * torch.exp(-self.log_vars[0])
+            p2 = 0.5 * torch.exp(-self.log_vars[1])
+            loss = p1 * loss_cls + p2 * loss_box + self.log_vars[0] + self.log_vars[1]
+
+            return_dict["loss"] = loss
+            return_dict["loss/cls"] = loss_cls
+            return_dict["loss/box"] = loss_box
+        elif self.mix == "cls":
+            return_dict["loss"] = loss_cls
+        elif self.mix == "box":
+            return_dict["loss"] = loss_box
 
         if self.training:
-            return {
-                "loss": loss, 
-                "loss/cls": loss_cls,
-                # "loss/equ": loss_equ,
-                # "loss/ign": loss_ign,
-                "loss/box": loss_box,
-                # "scores": preds_cls,  
-                # "targets": truth_cls,
-                # "preds_box": preds_box,
-                # "truth_box": truth_box
-            }
+            return return_dict
         else:
-            return {
-                "loss": loss, 
-                "loss/cls": loss_cls,
-                # "loss/equ": loss_equ,
-                # "loss/ign": loss_ign,
-                "loss/box": loss_box,
-                "scores": preds_cls,  
-                "targets": truth_cls,
-                "preds_box": preds_box,
-                "truth_box": truth_box
-            }
+            return_dict["scores"] = preds_cls  
+            return_dict["targets"] = truth_cls
+            return_dict["preds_box"] = preds_box
+            return_dict["truth_box"] = truth_box
+            return return_dict
