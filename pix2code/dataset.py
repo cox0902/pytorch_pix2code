@@ -34,7 +34,7 @@ class ImageCodeDataset(Dataset):
         
         self.label_trans = label_trans
         if self.label_trans is not None:
-            self.max_len_lt = max([len(each) for each in label_trans]) + 2
+            self.max_len_lt = max([len(each) for each in label_trans]) + 1
 
         assert not (has_comma and has_rect)
         self.has_comma = has_comma
@@ -109,14 +109,13 @@ class ImageCodeDataset(Dataset):
             }
 
         if self.label_trans is not None:
-            new_code = torch.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
-            new_code[:item["code_len"], 0] = 3  # <sos>
-            new_code_lt_len = torch.zeros((self.max_len_lt, ), dtype=np.int32)
+            new_code = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+            new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
             for i in range(item["code_len"]):
                 lts = self.label_trans[code[i]][::-1]
-                new_code[i, 1: len(lts) + 1] = lts
-                new_code[i, len(lts) + 1] = 4  # <eos>
-                new_code_lt_len[i] = len(lts) + 2
+                new_code[i, :len(lts)] = lts
+                new_code[i, len(lts)] = 4  # <eos>
+                new_code_lt_len[i] = len(lts) + 1
             item["code"] = new_code
             item["code_lt_len"] = new_code_lt_len 
 
