@@ -7,6 +7,7 @@ from torch.nn.modules.loss import _Loss
 import torchvision
 from torchvision.ops.feature_pyramid_network import FeaturePyramidNetwork
 from torchvision.models.feature_extraction import create_feature_extractor
+import torchvision.transforms.v2
 
 
 def soft_dice_score(
@@ -498,7 +499,8 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithMsk(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: bool = False):
+    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: bool = False,
+                 resize: str = None):
         super().__init__()
         self.mix = mix if mix is not None else "all"
         self.alpha_c = 1.
@@ -517,6 +519,7 @@ class ImageCaptionWithMsk(nn.Module):
         # self.criterion_ign = nn.BCEWithLogitsLoss()
         if self.mix == "all":
             self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
+        self.resize = resize if resize is None else int(resize)
         
     def forward(self, batch):
         imgs = batch["image"]
@@ -535,7 +538,7 @@ class ImageCaptionWithMsk(nn.Module):
         preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
             encoded_imgs, caps, caplens, pivs)
 
-        if self.mix in ["all", "cls"]:
+        if self.mix in ["all", "cls"] or not self.training:
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
             truth_cls = caps_sorted[:, 1:]  # .cpu()
             # truth_box = masks[sort_ind.cpu(), 1:]
@@ -547,8 +550,9 @@ class ImageCaptionWithMsk(nn.Module):
             preds_cls = nn.utils.rnn.pack_padded_sequence(preds_cls, decode_lengths, batch_first=True).data
             truth_cls = nn.utils.rnn.pack_padded_sequence(truth_cls, decode_lengths, batch_first=True).data
 
-            # Calculate loss
-            loss_cls = self.criterion_cls(preds_cls, truth_cls)
+            if self.training:
+                # Calculate loss
+                loss_cls = self.criterion_cls(preds_cls, truth_cls)
 
         # Add doubly stochastic attention regularization
         # loss_cls += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
@@ -565,19 +569,23 @@ class ImageCaptionWithMsk(nn.Module):
 
         # loss_ign = self.criterion_ign(preds_ign.squeeze(), truth_ign)
 
-        if self.mix in ["all", "box"]:
+        if self.mix in ["all", "box"] or not self.training:
             truth_box = masks[sort_ind, 1:]
 
             #
             preds_box = nn.utils.rnn.pack_padded_sequence(preds_box, decode_lengths, batch_first=True).data
             truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
+            if self.resize is not None:
+                preds_box = F.interpolate(preds_box, size=self.resize, mode="bilinear")
+                truth_box = F.interpolate(truth_box, size=self.resize, mode="bilinear")
+
             # print(preds_box.shape)
             # print(truth_box.shape)
-
-            loss_dice = self.criterion_dice(preds_box, truth_box)
-            loss_bcls = self.criterion_bcls(preds_box, truth_box)
-            loss_box = 0.8 * loss_bcls + 0.2 * loss_dice
+            if self.training:
+                loss_dice = self.criterion_dice(preds_box, truth_box)
+                loss_bcls = self.criterion_bcls(preds_box, truth_box)
+                loss_box = 0.8 * loss_bcls + 0.2 * loss_dice
 
         # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
         # box_masks = (truth_cls > 7)
@@ -594,20 +602,21 @@ class ImageCaptionWithMsk(nn.Module):
         # loss = loss_cls + loss_equ + loss_ign + loss_box
         return_dict = {}
 
-        if self.mix == "all":
-            p1 = 0.5 * torch.exp(-self.log_vars[0])
-            p2 = 0.5 * torch.exp(-self.log_vars[1])
-            loss = p1 * loss_cls + p2 * loss_box + self.log_vars[0] + self.log_vars[1]
-
-            return_dict["loss"] = loss
-            return_dict["loss/cls"] = loss_cls
-            return_dict["loss/box"] = loss_box
-        elif self.mix == "cls":
-            return_dict["loss"] = loss_cls
-        elif self.mix == "box":
-            return_dict["loss"] = loss_box
-
         if self.training:
+
+            if self.mix == "all":
+                p1 = 0.5 * torch.exp(-self.log_vars[0])
+                p2 = 0.5 * torch.exp(-self.log_vars[1])
+                loss = p1 * loss_cls + p2 * loss_box + self.log_vars[0] + self.log_vars[1]
+
+                return_dict["loss"] = loss
+                return_dict["loss/cls"] = loss_cls
+                return_dict["loss/box"] = loss_box
+            elif self.mix == "cls":
+                return_dict["loss"] = loss_cls
+            elif self.mix == "box":
+                return_dict["loss"] = loss_box
+                
             return return_dict
         else:
             return_dict["scores"] = preds_cls  
