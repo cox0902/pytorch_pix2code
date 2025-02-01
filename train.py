@@ -69,14 +69,15 @@ def parse_model(model: str):
         model_url = urlparse(model)
         model_name = model_url.netloc
         model_params = parse_qs(model_url.query)
+        model_params = { k: v[0] for k, v in model_params.items() }
     return model_name, model_params
 
 
 def build_resnet_model(model_resnet: str, verbose: bool = True):
     model_resnet_name, model_resnet_params = parse_model(model_resnet)
     if model_resnet_name == "resnet":
-        variant = model_resnet_params["variant"][0]
-        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
+        variant = model_resnet_params["variant"]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
@@ -92,8 +93,8 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         else:
             assert False
     elif model_resnet_name == "resnext":
-        variant = model_resnet_params["variant"][0]
-        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
+        variant = model_resnet_params["variant"]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant} and load_weight={load_weight}")
         if variant == "50":
@@ -104,9 +105,9 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
         else:
             assert False
     elif model_resnet_name == "vis":
-        variant = model_resnet_params["variant"][0]
-        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"][0] != "0")
-        copy_weight = ("copy_weight" in model_resnet_params) and (model_resnet_params["copy_weight"][0] != "0")
+        variant = model_resnet_params["variant"]
+        load_weight = ("load_weight" in model_resnet_params) and (model_resnet_params["load_weight"] != "0")
+        copy_weight = ("copy_weight" in model_resnet_params) and (model_resnet_params["copy_weight"] != "0")
         if verbose:
             print(f">>> Build {model_resnet_name} with variant={variant}, load_weight={load_weight} and copy_weight={copy_weight}")
         from dt.models import VisModel
@@ -144,24 +145,16 @@ def build_model(model: str, model_resnet: str, max_len: int):
         return Pix2Code(vocab_size=90)
     elif model_name == "imagecaption":
         resnet = build_resnet_model(model_resnet)
-        return ImageCaption(vocab_size=90, resnet=resnet)
+        return ImageCaption(resnet, vocab_size=90, **model_params.items())
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
-        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
+        return ImageCaptionWithBox(resnet, vocab_size=90, **model_params.items())
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
-        # embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        return ImageCaptionWithRnn(resnet, vocab_size=90, embed_parent=embed_parent)
+        return ImageCaptionWithRnn(resnet, vocab_size=90, **model_params.items())
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
-        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        mix = model_params["mix"][0] if "mix" in model_params else None
-        freeze = model_params["freeze"][0] if "freeze" in model_params else None
-        resize = model_params["resize"][0] if "resize" in model_params else None
-        ct = model_params["ct"][0] if "ct" in model_params else '1'
-        return ImageCaptionWithMsk(resnet, vocab_size=90, embed_parent=embed_parent, mix=mix, freeze=(freeze == '1'),
-                                   resize=resize, ct=(ct == '1'))
+        return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params.items())
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()

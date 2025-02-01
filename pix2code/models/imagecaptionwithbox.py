@@ -250,6 +250,8 @@ class ImageCaptionWithBox(nn.Module):
 
     def __init__(self, resnet, vocab_size: int, embed_parent: str = None):
         super().__init__()
+        print(f"[params] embed_parent={embed_parent}")
+
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
         self.decoder = DecoderWithAttention(attention_dim=512,

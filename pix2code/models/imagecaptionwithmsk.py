@@ -503,10 +503,15 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithMsk(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: bool = False,
-                 resize: str = None, ct: bool = True):
+    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: str = None,
+                 resize: str = None, ct: str = None):
         super().__init__()
         self.mix = mix if mix is not None else "all"
+        self.freeze = (freeze != '0')
+        self.resize = int(resize) if resize is not None else None
+        self.ct = (ct != '0')
+        print(f"[params] embed_parent={embed_parent}, mix={self.mix}, freeze={self.freeze}, resize={self.resize}, ct={self.ct}")
+
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
         if freeze:
@@ -524,7 +529,6 @@ class ImageCaptionWithMsk(nn.Module):
         # self.criterion_ign = nn.BCEWithLogitsLoss()
         if self.mix == "all":
             self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
-        self.resize = resize if resize is None else int(resize)
         
     def forward(self, batch):
         imgs = batch["image"]
