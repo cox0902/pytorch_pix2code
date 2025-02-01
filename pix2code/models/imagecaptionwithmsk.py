@@ -560,8 +560,8 @@ class ImageCaptionWithMsk(nn.Module):
         # print(truth_box.shape)
 
         loss_dice = self.criterion_dice(preds_box, truth_box)
-        # loss_bcls = self.criterion_bcls(preds_box, truth_box)
-        loss_box = loss_dice
+        loss_bcls = self.criterion_bcls(preds_box, truth_box)
+        loss_box = 0.8 * loss_bcls + 0.2 * loss_dice
 
         # box_masks = (1 - truth_equ.long()) * (1 - truth_ign.long())
         # box_masks = (truth_cls > 7)
