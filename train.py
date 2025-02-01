@@ -160,7 +160,8 @@ def build_model(model: str, model_resnet: str, max_len: int):
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         mix = model_params["mix"][0] if "mix" in model_params else None
-        return ImageCaptionWithMsk(resnet, vocab_size=90, embed_parent=embed_parent, mix=mix)
+        freeze = model_params["freeze"][0] if "freeze" in model_params else None
+        return ImageCaptionWithMsk(resnet, vocab_size=90, embed_parent=embed_parent, mix=mix, freeze=(freeze == '1'))
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()

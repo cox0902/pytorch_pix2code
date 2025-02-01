@@ -498,12 +498,13 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithMsk(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None):
+    def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: bool = False):
         super().__init__()
         self.mix = mix if mix is not None else "all"
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
-        self.encoder.freeze()
+        if freeze:
+            self.encoder.freeze()
         self.decoder = DecoderWithAttention(attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,
