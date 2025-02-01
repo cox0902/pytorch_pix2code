@@ -1,9 +1,9 @@
 from typing import *
 
 import argparse
-from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
+import json
 import numpy as np
 
 from torch import nn
@@ -12,17 +12,14 @@ from torch.utils.data import DataLoader
 
 import torchvision
 
-from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC, BinaryAccuracy
+from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
 
 from pix2code.utils import seed_everything
 from pix2code.trainer import Trainer
-from pix2code.metrics import (
-    SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer, MapScorer,
-    MaskIouCompoundScorer, MaskIouScorer
-)
+from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk
+from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -47,6 +44,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
     parser.add_argument("--code-path", type=str)
+    parser.add_argument("--code-lt-path", type=str)
     parser.add_argument("--test-path", type=str)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
@@ -131,8 +129,8 @@ def check_model(model: str) -> Tuple[bool, bool]:
         return False, False, False
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         return True, True, False
-    elif model_name in ["imagecaptionwithrpn", "icwr"]:
-        return True, False, False
+    elif model_name in ["imagecaptionwithrnn", "icwr"]:
+        return False, False, False
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         return True, False, True
     else:
@@ -151,11 +149,10 @@ def build_model(model: str, model_resnet: str, max_len: int):
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
         return ImageCaptionWithBox(resnet, vocab_size=90, embed_parent=embed_parent)
-    elif model_name in ["imagecaptionwithrpn", "icwr"]:
-        from pix2code.models import ImageCaptionWithRpn
+    elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
-        embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
-        return ImageCaptionWithRpn(resnet, max_seq_len=max_len, vocab_size=90, embed_parent=embed_parent)
+        # embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
+        return ImageCaptionWithRnn(resnet, vocab_size=90, embed_parent=embed_parent)
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
         embed_parent = model_params["embed_parent"][0] if "embed_parent" in model_params else None
@@ -186,9 +183,16 @@ def main(args):
     else:
         split_train, split_valid, split_test = None, None, None
 
+    if args.code_lt_path is not None:
+        with open(args.code_lt_path, "r") as input:
+            code_lt = json.load(input)
+    else:
+        code_lt = None
+
     has_comma = (not args.no_comma)
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
+                                 label_trans=code_lt,
                                  has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
@@ -197,7 +201,8 @@ def main(args):
         
     if split_valid is not None:
         valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                    has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
+                                     label_trans=code_lt,
+                                     has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
         valid_loader = DataLoader(valid_set, batch_size=args.batch_size, shuffle=True, pin_memory=args.pin_memory)
@@ -260,6 +265,7 @@ def main(args):
     if split_test is not None:
         print("=" * 100)
         test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
+                                    label_trans=code_lt,
                                     has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")

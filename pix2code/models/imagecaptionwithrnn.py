@@ -289,7 +289,7 @@ class DecoderWithAttention(nn.Module):
         return preds, alpha, (h, c)
 
 
-class ImageCaption(nn.Module):
+class ImageCaptionWithRnn(nn.Module):
 
     def __init__(self, vocab_size: int, resnet = None):
         super().__init__()

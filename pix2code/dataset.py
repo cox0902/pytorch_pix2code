@@ -31,7 +31,11 @@ class ImageCodeDataset(Dataset):
         self.code_path = code_path
         self.split = split
         self.transform = transform
+        
         self.label_trans = label_trans
+        if self.label_trans is not None:
+            self.max_len_lt = max([len(each) for each in label_trans]) + 2
+
         assert not (has_comma and has_rect)
         self.has_comma = has_comma
         self.has_rect = has_rect
@@ -84,10 +88,7 @@ class ImageCodeDataset(Dataset):
 
         code = self.codes[code_idx]
 
-        if self.label_trans is not None:
-            for i in range(len(code)):
-                code[i] = self.label_trans[code[i]][-1]
-
+        # TODO: the has_comma behavior changes to remove commas from code.
         if not self.has_comma:
             code_wo_comma = np.zeros_like(code)
             code = code[code != 7]
@@ -106,6 +107,19 @@ class ImageCodeDataset(Dataset):
                 "code": code,
                 "code_len": code_len,
             }
+
+        if self.label_trans is not None:
+            new_code = torch.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+            new_code[:item["code_len"], 0] = 3  # <sos>
+            new_code_lt_len = torch.zeros((self.max_len_lt, ), dtype=np.int32)
+            for i in range(item["code_len"]):
+                lts = self.label_trans[code[i]][::-1]
+                new_code[i, 1: len(lts) + 1] = lts
+                new_code[i, len(lts) + 1] = 4  # <eos>
+                new_code_lt_len[i] = len(lts) + 2
+            item["code"] = new_code
+            item["code_lt_len"] = new_code_lt_len 
+
         if self.has_rect:
             #
             if not self.mask_rect:

@@ -166,19 +166,22 @@ class DoubleConv(nn.Module):
 class Up(nn.Module):
     """Upscaling then double conv"""
 
-    def __init__(self, in_channels, skip_channels, out_channels, bilinear=True):
+    def __init__(self, in_channels, skip_channels, out_channels, ct=True):
         super().__init__()
-
+        self.ct = ct
         # if bilinear, use the normal convolutions to reduce the number of channels
-        if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        else:
+        if self.ct:
             self.up = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=2, stride=2)
+        else:
+            self.up = None
         self.conv = DoubleConv(in_channels + skip_channels, out_channels)
 
-    def forward(self, x1, x2):
+    def forward(self, x1, x2, width, height):
 
-        x1 = self.up(x1)
+        if self.up is not None:
+            x1 = self.up(x1)
+        else:
+            x1 = F.interpolate(x1, (width, height), mode="nearest")
         
         if x2 is not None:
             x1 = torch.cat([x1, x2], dim=1)
@@ -215,17 +218,17 @@ class UpNet(nn.Module):
 
         self.blocks = nn.ModuleList()
         for in_c, skip_c, out_c in zip(in_channels, skip_channels, out_channels):
-            block = Up(in_c, skip_c, out_c, False)
+            block = Up(in_c, skip_c, out_c)
             self.blocks.append(block)
 
         self.out = OutConv(out_c, 1)
 
     def forward(self, *features):
         # spatial shapes of features: [hw, hw/2, hw/4, hw/8, ...]
-        # spatial_shapes = [feature.shape[2:] for feature in features]
-        # spatial_shapes = spatial_shapes[::-1]
+        spatial_shapes = [feature.shape[2:] for feature in features]
+        spatial_shapes = spatial_shapes[::-1]
         
-        # features = features[1:]
+        features = features[1:]
         features = features[::-1]
 
         x = features[0]
@@ -233,10 +236,10 @@ class UpNet(nn.Module):
 
         for i, decoder_block in enumerate(self.blocks):
             # upsample to the next spatial shape
-            # height, width = spatial_shapes[i + 1]
+            width, height  = spatial_shapes[i + 1]
             # print(x.shape, height, width)
             skip_connection = skip_connections[i] if i < len(skip_connections) else None
-            x = decoder_block(x, skip_connection)
+            x = decoder_block(x, skip_connection, width=width, height=height)
         
         # print(x.shape)
         return self.out(x)
@@ -405,7 +408,7 @@ class DecoderWithAttention(nn.Module):
         c = self.init_c(mean_encoder_out)
         return h, c
 
-    def forward(self, encoder_out, encoded_captions, caption_lengths, pivs):
+    def forward(self, imgs, encoder_out, encoded_captions, caption_lengths, pivs):
         """
         Forward propagation.
 
@@ -427,6 +430,7 @@ class DecoderWithAttention(nn.Module):
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         # encoder_out = encoder_out[sort_ind]
         encoded_captions = encoded_captions[sort_ind]
+        imgs = imgs[sort_ind]
 
         #
         eo1, eo2, eo3, eo4, eo5 = encoder_out
@@ -469,7 +473,7 @@ class DecoderWithAttention(nn.Module):
             awe4, aw4, alpha4 = self.att4(eo4[:batch_size_t], h[:batch_size_t])
             awe5, aw5, alpha5 = self.att5(eo5[:batch_size_t], h[:batch_size_t])
             
-            out = self.upnet(aw1, aw2, aw3, aw4, aw5)
+            out = self.upnet(imgs, aw1, aw2, aw3, aw4, aw5)
             preds_box[:batch_size_t, t, :, :] = out[:, 0, :, :]  # .cpu()
 
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
@@ -536,7 +540,7 @@ class ImageCaptionWithMsk(nn.Module):
         # preds_cls, preds_box, preds_equ, preds_ign, caps_sorted, decode_lengths, alphas, sort_ind = \
         #     self.decoder(imgs, caps, caplens)
         preds_cls, preds_box, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
-            encoded_imgs, caps, caplens, pivs)
+            imgs, encoded_imgs, caps, caplens, pivs)
 
         if self.mix in ["all", "cls"] or not self.training:
             # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
