@@ -577,8 +577,8 @@ class ImageCaptionWithMsk(nn.Module):
             truth_box = nn.utils.rnn.pack_padded_sequence(truth_box, decode_lengths, batch_first=True).data
 
             if self.resize is not None:
-                preds_box = F.interpolate(preds_box, size=self.resize, mode="bilinear")
-                truth_box = F.interpolate(truth_box, size=self.resize, mode="bilinear")
+                preds_box = F.interpolate(preds_box, size=self.resize, mode="nearest")
+                truth_box = F.interpolate(truth_box, size=self.resize, mode="nearest")
 
             # print(preds_box.shape)
             # print(truth_box.shape)
