@@ -159,8 +159,9 @@ def build_model(model: str, model_resnet: str, max_len: int):
         mix = model_params["mix"][0] if "mix" in model_params else None
         freeze = model_params["freeze"][0] if "freeze" in model_params else None
         resize = model_params["resize"][0] if "resize" in model_params else None
+        ct = model_params["ct"][0] if "ct" in model_params else '1'
         return ImageCaptionWithMsk(resnet, vocab_size=90, embed_parent=embed_parent, mix=mix, freeze=(freeze == '1'),
-                                   resize=resize)
+                                   resize=resize, ct=(ct == '1'))
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()

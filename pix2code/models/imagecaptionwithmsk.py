@@ -198,7 +198,7 @@ class OutConv(nn.Module):
 
 
 class UpNet(nn.Module):
-    def __init__(self, encoder_channels, decoder_channels):
+    def __init__(self, encoder_channels, decoder_channels, ct: bool):
         super().__init__()
 
         # remove first skip with same spatial resolution
@@ -218,7 +218,7 @@ class UpNet(nn.Module):
 
         self.blocks = nn.ModuleList()
         for in_c, skip_c, out_c in zip(in_channels, skip_channels, out_channels):
-            block = Up(in_c, skip_c, out_c)
+            block = Up(in_c, skip_c, out_c, ct=ct)
             self.blocks.append(block)
 
         self.out = OutConv(out_c, 1)
@@ -318,7 +318,7 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 embed_parent=None):
+                 embed_parent=None, ct=True):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -339,7 +339,7 @@ class DecoderWithAttention(nn.Module):
 
         encoder_channels = (4, 64, 256, 512, 1024, 2048)
         decoder_channels = (256, 128, 64, 32, 16)
-        self.upnet = UpNet(encoder_channels, decoder_channels)
+        self.upnet = UpNet(encoder_channels, decoder_channels, ct=ct)
 
         self.att1 = Attention(64, decoder_dim, attention_dim)  # attention network
         self.att2 = Attention(256, decoder_dim, attention_dim)  # attention network
@@ -504,7 +504,7 @@ class DecoderWithAttention(nn.Module):
 class ImageCaptionWithMsk(nn.Module):
 
     def __init__(self, resnet, vocab_size: int, embed_parent: str = None, mix: str = None, freeze: bool = False,
-                 resize: str = None):
+                 resize: str = None, ct: bool = True):
         super().__init__()
         self.mix = mix if mix is not None else "all"
         self.alpha_c = 1.
@@ -516,7 +516,8 @@ class ImageCaptionWithMsk(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
-                                            embed_parent=embed_parent)
+                                            embed_parent=embed_parent,
+                                            ct=ct)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_dice = DiceLoss()
         self.criterion_bcls = nn.BCEWithLogitsLoss()
