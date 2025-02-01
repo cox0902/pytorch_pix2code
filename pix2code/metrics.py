@@ -295,6 +295,9 @@ class CompoundScorer(Scorer):
         return [each.format() for each in self.scorers]
 
 
+registered_scores = {}
+
+
 class SimpleMetricScorer(Scorer):
 
     def __init__(self, name, metric, name_hyp, name_ref):
@@ -306,6 +309,10 @@ class SimpleMetricScorer(Scorer):
 
     def update(self, outputs):
         self.scorer.update(outputs[self.name_hyp], outputs[self.name_ref])
+
+
+registered_scores["acc"] = SimpleMetricScorer("acc", MulticlassAccuracy(num_classes=90), "scores", "targets")
+registered_scores["auc"] = SimpleMetricScorer("auc", MulticlassAUROC(num_classes=90), "scores", "targets")
 
 
 class MapScorer(Scorer):
@@ -329,6 +336,9 @@ class MapScorer(Scorer):
 
     def compute(self):
         return self.scorer.compute()["map"]
+
+
+registered_scores["map"] = MapScorer()
 
 
 def _handle_zero_division(x, zero_division):
@@ -469,6 +479,9 @@ class MaskIouScorer(Scorer):
         ]
     
 
+registered_scores["mis"] = MaskIouScorer()
+    
+
 class MaskIouCompoundScorer(Scorer):
 
     def __init__(self):
@@ -507,15 +520,20 @@ class MaskIouCompoundScorer(Scorer):
         ]
 
     
+registered_scores["mics"] = MaskIouCompoundScorer()
 
 
 class AdvMetrics:
 
-    def __init__(self, metrics: List[Scorer]):
+    def __init__(self, metrics: List[Scorer] = [], reduction = "sum"):
         self.start_time = time.perf_counter()
         self.batch_time = AverageMeter()
         self.batch_count = 0
         self.metrics = metrics
+        self.reduction = reduction if reduction is not None else "sum"
+
+    def add_metric(self, name):
+        self.metrics.append(registered_scores[name])
 
     def reset(self, batch_count):
         self.batch_time.reset()
@@ -533,10 +551,21 @@ class AdvMetrics:
         self.start_time = time.perf_counter()
 
     def compute(self) -> float:
-        agg = 0
-        for metric in self.metrics:
-            agg += metric.compute()
-        return agg
+        if self.reduction == "sum":
+            agg = 0
+            for metric in self.metrics:
+                agg += metric.compute()
+            return agg
+        elif self.reduction == "avg":
+            agg = 0
+            for metric in self.metrics:
+                agg += metric.compute()
+            return agg / len(self.metrics)
+        else:
+            for metric in self.metrics:
+                if metric.name == self.reduction:
+                    return metric.compute()
+            assert False
 
     def format(self, show_scores: bool = True, show_batch_time: bool = True) -> str:
         agg_metrics = []

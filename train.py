@@ -246,22 +246,10 @@ def main(args):
     if args.eval_metric is None:
         eval_metrics = metrics
     else:
-        if args.eval_metric == "icwr":
-            eval_metrics = AdvMetrics([
-                SimpleMetricScorer("CLS_ACC", BinaryAccuracy(), "preds_cls", "truth_cls"),
-                SimpleMetricScorer("LBL_ACC", MulticlassAccuracy(num_classes=90), "preds_lbl", "truth_lbl"),
-                MapScorer()
-            ])
-        elif args.eval_metric == "mics":
-            eval_metrics = AdvMetrics([
-                MaskIouCompoundScorer()
-            ])
-        elif args.eval_metric == "mis+acc+auc":
-            eval_metrics = AdvMetrics([
-                MaskIouScorer(),
-                SimpleMetricScorer("acc", MulticlassAccuracy(num_classes=90), "scores", "targets"),
-                SimpleMetricScorer("auc", MulticlassAUROC(num_classes=90), "scores", "targets"),
-            ])
+        eval_metrics = AdvMetrics(reduction=args.stop_metric)
+        ems = args.eval_metric.split("+")
+        for each in ems:
+            eval_metrics.add_metric(each)
 
     trainer.fit(epochs=args.epochs, train_loader=train_loader, valid_loader=valid_loader, 
                 metrics=metrics, eval_metrics=eval_metrics, proof_of_concept=args.proof_of_concept)
