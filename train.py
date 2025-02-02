@@ -58,6 +58,8 @@ def get_args_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--no-comma", action="store_true")
 
+    parser.add_argument("--extra", type=str)
+
     return parser
 
 
@@ -138,7 +140,7 @@ def check_model(model: str) -> Tuple[bool, bool]:
         return False, False, False
 
 
-def build_model(model: str, model_resnet: str, max_len: int):
+def build_model(model: str, model_resnet: str, max_len: int, extra):
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
@@ -151,7 +153,8 @@ def build_model(model: str, model_resnet: str, max_len: int):
         return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithRnn(resnet, vocab_size=90, **model_params)
+        emb_weight = np.load(extra) if extra is not None else None
+        return ImageCaptionWithRnn(resnet, vocab_size=90, emb_weight=emb_weight, **model_params)
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)
@@ -205,7 +208,7 @@ def main(args):
 
     #
 
-    model = build_model(args.model, args.model_resnet, max_len=train_set.max_len)
+    model = build_model(args.model, args.model_resnet, max_len=train_set.max_len, extra=args.extra)
 
     if args.compat:
         model.criterion = nn.CrossEntropyLoss()

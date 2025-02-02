@@ -88,7 +88,9 @@ class Attention(nn.Module):
 
 class TokenDecoder(nn.Module):
 
-    def __init__(self, embed_dim, encoder_dim, decoder_dim, vocab_size, dropout=0.2, proof_of_concept=False, *args, **kwargs):
+    def __init__(self, embed_dim, encoder_dim, decoder_dim, vocab_size, dropout=0.2, proof_of_concept=False, 
+                 emb_weight=None,
+                 *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
         self.dropout = dropout
@@ -100,6 +102,12 @@ class TokenDecoder(nn.Module):
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
+        
+        if emb_weight is not None:
+            self.emb_weight = nn.Embedding(90, 90, _weight=torch.from_numpy(emb_weight), _freeze=True)
+        else:
+            self.emb_weight = None
+
         self.init_weights()
 
     def init_weights(self):
@@ -138,6 +146,8 @@ class TokenDecoder(nn.Module):
                 for bi in range(batch_size_t):
                     predictions[bi, t, targets[bi, t + 1]] = 1
             else:
+                if self.emb_weight is not None:
+                    preds = preds * self.emb_weight(targets[:batch_size_t, t])
                 predictions[:batch_size_t, t, :] = preds
 
         return predictions, sort_ind
@@ -149,7 +159,7 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 proof_of_concept: bool = False):
+                 proof_of_concept: bool = False, emb_weight = None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -179,7 +189,7 @@ class DecoderWithAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, vocab_size, dropout=dropout,
-                                          proof_of_concept=self.proof_of_concept)
+                                          proof_of_concept=self.proof_of_concept, emb_weight=emb_weight)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -320,8 +330,10 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithRnn(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int):
+    def __init__(self, resnet, vocab_size: int, emb_weight = None):
         super().__init__()
+        print(f"[params] emb_weight={emb_weight is not None}")
+
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.alpha_c = 1.
@@ -331,7 +343,8 @@ class ImageCaptionWithRnn(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
-                                            proof_of_concept=self.proof_of_concept)
+                                            proof_of_concept=self.proof_of_concept,
+                                            emb_weight=emb_weight)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
