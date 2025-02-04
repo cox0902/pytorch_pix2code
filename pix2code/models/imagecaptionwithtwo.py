@@ -104,7 +104,8 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
+    def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
+                 encoder_dim=2048, dropout=0.5, pos_embed=None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -126,7 +127,11 @@ class DecoderWithAttention(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
-        self.pos_embedding = PositionalEmbedding(max_len, embed_dim)
+
+        if pos_embed == '1':
+            self.pos_embedding = PositionalEmbedding(max_len, embed_dim)
+        else:
+            self.pos_embedding = None
 
         self.decode_step_h = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.decode_step_v = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
@@ -188,6 +193,13 @@ class DecoderWithAttention(nn.Module):
         h = self.init_h_v(mean_encoder_out)  # (batch_size, decoder_dim)
         c = self.init_c_v(mean_encoder_out)
         return h, c
+    
+    def rnn_forward(self, dir, encoder_out, embeddings, hidden):
+        rnn = self.decode_step_h if dir == 'hor' else self.decode_step_v
+        attw_out, _ = self.attention(encoder_out, hidden)
+        gate = self.sigmoid(self.f_beta(hidden))
+        attw_out = attw_out * gate
+        return rnn(torch.cat([embeddings, attw_out], dim=1), hidden)
 
     def forward(self, encoder_out, encoded_captions, caption_lengths):
         """
@@ -209,28 +221,64 @@ class DecoderWithAttention(nn.Module):
 
         # Embedding
         embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
-        embeddings = self.pos_embedding(embeddings)
+        if self.pos_embedding is not None:
+            embeddings = self.pos_embedding(embeddings)
+
+        predictions = []
+        targets = []
 
         for bi in range(batch_size):
-            hidden_h = self.init_hidden_state_h(encoder_out[bi])
-            hidden_v = self.init_hidden_state_v(encoder_out[bi])
+            e_out = encoder_out[bi][None]
 
-            self.decode_step_h()
+            init_hidden_h = self.init_hidden_state_h(e_out)
+            init_hidden_v = self.init_hidden_state_v(e_out)
 
-            last = (encoded_captions[bi, 0], hidden_h, hidden_v)  # <START>
-            queue = [last]
+            init_hidden_h = self.rnn_forward("hor", e_out, embeddings[bi, 0], init_hidden_h)
+            init_hidden_v = self.rnn_forward("ver", e_out, embeddings[bi, 0], init_hidden_v)
+            
+            last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  # <START>
+            queue = [(encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h, init_hidden_v)]
             leaves = []
+
             for ti in range(1, caption_lengths[bi]):
                 token = encoded_captions[bi, ti]
-                if token == 5:  # [LB]
-                    leaves.pop()
-                    queue.append(last)
-                    last = (encoded_captions[bi, 0], hidden_h, last[2])  # <START>
-                    continue
-                if token == 6:  # [RB]
+                token_embed = embeddings[bi, ti]
 
-                    last = queue.pop()
+                assert token != 4
+
+                if token == 5:  # [LB]
+                    # remove non-leaves
+                    leaves.pop()
+
+                    # move next in vertical
+                    new_hidden_v = self.rnn_forward("ver", e_out, last_h[1], queue[-1][3])
+                    queue.append(last_h + [new_hidden_v])
+
+                    # reset horizital, TODO: pos_embedding
+                    last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  
                     continue
+
+                if token == 6:  # [RB]
+                    # make prediction on horzital end
+
+                    poped = queue.pop()
+                    last_h = (poped[0], poped[1], poped[2])
+                    continue
+
+                # make prediction
+
+                # move next in horzital
+                new_hidden_h = self.rnn_forward("hor", e_out, token_embed, last_h[2])
+                last_h = (token, token_embed, new_hidden_h)  # 
+
+                # handle leaves for vertical end
+                leaves.append((token, token_embed, queue[-1][3]))
+            
+            for leaf in leaves:
+                # move next in vertical
+                new_hidden_v = self.rnn_forward("ver", e_out, leaf[1], leaf[2])
+
+                # make prediction on vertical end
 
 
         # Initialize LSTM state

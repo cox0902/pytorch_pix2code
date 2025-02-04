@@ -104,7 +104,9 @@ class TokenDecoder(nn.Module):
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         
         if emb_weight is not None:
-            self.emb_weight = nn.Embedding(90, 90, _weight=torch.from_numpy(emb_weight), _freeze=True)
+            tx = torch.from_numpy(emb_weight)
+            tx.clamp_min_(0.01)
+            self.emb_weight = nn.Embedding(90, 90, _weight=tx, _freeze=True)
         else:
             self.emb_weight = None
 
