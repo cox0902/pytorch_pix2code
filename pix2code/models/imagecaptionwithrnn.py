@@ -344,7 +344,7 @@ class ImageCaptionWithRnn(nn.Module):
 
     def __init__(self, resnet, vocab_size: int, emb_weight = None, generator=None):
         super().__init__()
-        print(f"[params] emb_weight={emb_weight is not None}")
+        print(f"[params] emb_weight={emb_weight}")
 
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
