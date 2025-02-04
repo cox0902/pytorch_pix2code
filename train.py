@@ -147,7 +147,7 @@ def build_model(model: str, model_resnet: str, max_len: int, extra):
         return Pix2Code(vocab_size=90)
     elif model_name == "imagecaption":
         resnet = build_resnet_model(model_resnet)
-        return ImageCaption(resnet, vocab_size=90, **model_params)
+        return ImageCaption(resnet, vocab_size=90, max_len=max_len, **model_params)
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)

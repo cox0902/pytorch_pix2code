@@ -258,7 +258,7 @@ class ImageCaptionWithBox(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5,
+                                            dropout=0.2,
                                             embed_parent=embed_parent)
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_box = torchvision.ops.generalized_box_iou_loss

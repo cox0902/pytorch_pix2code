@@ -86,106 +86,25 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 
-class TokenDecoder(nn.Module):
+class PositionalEmbedding(nn.Module):
+    def __init__(self, max_len, emb_dim):
+        super().__init__()
+        self.embedding = nn.Parameter(torch.zeros(1, max_len, emb_dim), requires_grad=False)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, emb_dim, 2) * -(torch.log(torch.tensor(10000.0)) / emb_dim))
+        self.embedding[:, :, 0::2] = torch.sin(position * div_term)
+        self.embedding[:, :, 1::2] = torch.cos(position * div_term)
 
-    def __init__(self, embed_dim, encoder_dim, decoder_dim, vocab_size, dropout=0.2, proof_of_concept=False, 
-                 emb_weight=None,
-                 *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.vocab_size = vocab_size
-        self.dropout = dropout
-        self.proof_of_concept = proof_of_concept
-
-        self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
-        self.dropout = nn.Dropout(p=self.dropout)
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
-        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
-        self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
-        
-        if emb_weight is not None:
-            self.emb_weight = nn.Embedding(90, 90, _weight=torch.from_numpy(emb_weight), _freeze=True)
-        else:
-            self.emb_weight = None
-
-        self.init_weights()
-
-    def init_weights(self):
-        self.embedding.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
-
-    def init_hidden_state(self, encoder_out):
-        h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
-        c = self.init_c(encoder_out)
-        return h, c
+    def forward(self, x):
+        return x + self.embedding[:, :x.size(1)]
     
-    def forward(self, encoder_out, targets, target_lengths):
-        
-        target_lengths, sort_ind = target_lengths.sort(dim=0, descending=True)
-        targets = targets[sort_ind]  # (batch_size, seq_len)
-        target_lengths = target_lengths[sort_ind]
-
-        h, c = self.init_hidden_state(encoder_out)
-
-        embeddings = self.embedding(targets)
-
-        decode_lengths = (target_lengths - 1).tolist()
-
-        predictions = torch.zeros(len(decode_lengths), max(decode_lengths), self.vocab_size).to(encoder_out.device)
-
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-
-            h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], encoder_out[:batch_size_t]], dim=1),
-                (h[:batch_size_t], c[:batch_size_t]))
-            
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-            if self.proof_of_concept:
-                for bi in range(batch_size_t):
-                    predictions[bi, t, targets[bi, t + 1]] = 1
-            else:
-                if self.emb_weight is not None:
-                    preds = preds * self.emb_weight(targets[:batch_size_t, t])
-                predictions[:batch_size_t, t, :] = preds
-
-        return predictions, sort_ind
-
-    def predict_init(self, encoder_out):
-        h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        
-        return {
-            "encoder_out": encoder_out,
-            "h": h,
-            "c": c,
-        }
-
-    def predict_next(self, inputs, contexts):
-        
-        embeddings = self.embedding(inputs)
-
-        # with torch.no_grad() should be called outside this scope.
-        h, c = self.decode_step(torch.cat([embeddings, contexts["encoder_out"]], dim=1), 
-                                (contexts["h"], contexts["c"]))
-
-        scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-
-        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
-        
-        return predicts, scores, {
-            "h": h,
-            "c": c,
-        }
-
 
 class DecoderWithAttention(nn.Module):
     """
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 proof_of_concept: bool = False, emb_weight = None, generator = None):
+    def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -202,21 +121,23 @@ class DecoderWithAttention(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
         self.dropout = dropout
-        self.proof_of_concept = proof_of_concept
-        self.generator = generator
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
-        self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
-        self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
+        self.pos_embedding = PositionalEmbedding(max_len, embed_dim)
+
+        self.decode_step_h = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        self.decode_step_v = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        self.init_h_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+        self.init_c_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
+        self.init_h_v = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+        self.init_c_v = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
+
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, vocab_size, dropout=dropout,
-                                          proof_of_concept=self.proof_of_concept, emb_weight=emb_weight)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -244,7 +165,7 @@ class DecoderWithAttention(nn.Module):
         for p in self.embedding.parameters():
             p.requires_grad = fine_tune
 
-    def init_hidden_state(self, encoder_out):
+    def init_hidden_state_h(self, encoder_out):
         """
         Creates the initial hidden and cell states for the decoder's LSTM based on the encoded images.
 
@@ -252,11 +173,23 @@ class DecoderWithAttention(nn.Module):
         :return: hidden state, cell state
         """
         mean_encoder_out = encoder_out.mean(dim=1)
-        h = self.init_h(mean_encoder_out)  # (batch_size, decoder_dim)
-        c = self.init_c(mean_encoder_out)
+        h = self.init_h_h(mean_encoder_out)  # (batch_size, decoder_dim)
+        c = self.init_c_h(mean_encoder_out)
         return h, c
 
-    def forward(self, encoder_out, encoded_captions, caption_lengths, caption_lt_lengths):
+    def init_hidden_state_v(self, encoder_out):
+        """
+        Creates the initial hidden and cell states for the decoder's LSTM based on the encoded images.
+
+        :param encoder_out: encoded images, a tensor of dimension (batch_size, num_pixels, encoder_dim)
+        :return: hidden state, cell state
+        """
+        mean_encoder_out = encoder_out.mean(dim=1)
+        h = self.init_h_v(mean_encoder_out)  # (batch_size, decoder_dim)
+        c = self.init_c_v(mean_encoder_out)
+        return h, c
+
+    def forward(self, encoder_out, encoded_captions, caption_lengths):
         """
         Forward propagation.
 
@@ -274,15 +207,31 @@ class DecoderWithAttention(nn.Module):
         encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
         num_pixels = encoder_out.size(1)
 
-        # Sort input data by decreasing lengths; why? apparent below
-        caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
-        encoder_out = encoder_out[sort_ind]
-        encoded_captions = encoded_captions[sort_ind]
-        caption_lt_lengths = caption_lt_lengths[sort_ind]
-
         # Embedding
-        embeddings = self.embedding(encoded_captions[:, :, 0])  # (batch_size, max_caption_length, embed_dim)
-        # print(embeddings.shape)
+        embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
+        embeddings = self.pos_embedding(embeddings)
+
+        for bi in range(batch_size):
+            hidden_h = self.init_hidden_state_h(encoder_out[bi])
+            hidden_v = self.init_hidden_state_v(encoder_out[bi])
+
+            self.decode_step_h()
+
+            last = (encoded_captions[bi, 0], hidden_h, hidden_v)  # <START>
+            queue = [last]
+            leaves = []
+            for ti in range(1, caption_lengths[bi]):
+                token = encoded_captions[bi, ti]
+                if token == 5:  # [LB]
+                    leaves.pop()
+                    queue.append(last)
+                    last = (encoded_captions[bi, 0], hidden_h, last[2])  # <START>
+                    continue
+                if token == 6:  # [RB]
+
+                    last = queue.pop()
+                    continue
+
 
         # Initialize LSTM state
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
@@ -290,10 +239,9 @@ class DecoderWithAttention(nn.Module):
         # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
-        decode_lt_lengths = caption_lt_lengths.flatten().tolist()
 
         # Create tensors to hold word predicion scores and alphas
-        predictions = torch.zeros(batch_size, max(decode_lengths), max(decode_lt_lengths), vocab_size).to(encoder_out.device)
+        predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
         # At each time-step, decode by
@@ -301,106 +249,86 @@ class DecoderWithAttention(nn.Module):
         # then generate a new word in the decoder with the previous word and the attention weighted encoding
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
-            attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
+            attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t],
+                                                                h[:batch_size_t])
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
             h, c = self.decode_step(
                 torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-            if self.proof_of_concept:
-                for bi in range(batch_size_t):
-                    predictions[bi, t, 0, encoded_captions[bi, t + 1, 0]] = 1
-            else:
-                predictions[:batch_size_t, t, 0] = preds
-            preds_tokens, sort_tokens = self.token_decoder(h, encoded_captions[:batch_size, t + 1, :], caption_lt_lengths[:batch_size_t, t + 1])
-            # print(predictions.shape, preds.shape)
-            predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
+            predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, t, :] = alpha
 
-        return predictions, encoded_captions, caption_lt_lengths, alphas, sort_ind
-
-    def predict(self, encoder_out, captions, hiddens):
+        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+    
+    def predict(self, encoder_out, captions, hiddens = None):
         # Embedding
         # print(captions.shape)
         embeddings = self.embedding(captions)  # (batch_size, embed_dim)
         # print(embeddings.shape)
 
-        h, c = hiddens
-        # print("h, c:", h.shape, c.shape)
+        # Initialize LSTM state
+        if hiddens is None:
+            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
 
-        attention_weighted_encoding, alpha = self.attention(encoder_out, h)
-        gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
-        attention_weighted_encoding = gate * attention_weighted_encoding
-        h, c = self.decode_step(
-            torch.cat([embeddings, attention_weighted_encoding], dim=1),
-            (h, c))  # (batch_size_t, decoder_dim)
-        preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            decode_length = captions.size(-1)
+
+            for t in range(decode_length):
+                attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+                gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
+                attention_weighted_encoding = gate * attention_weighted_encoding
+                h, c = self.decode_step(
+                    torch.cat([embeddings, attention_weighted_encoding], dim=1),
+                    (h, c))  # (batch_size_t, decoder_dim)
+                preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+        else:
+            h, c = hiddens
+            # print("h, c:", h.shape, c.shape)
+
+            attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+            gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
+            attention_weighted_encoding = gate * attention_weighted_encoding
+            h, c = self.decode_step(
+                torch.cat([embeddings, attention_weighted_encoding], dim=1),
+                (h, c))  # (batch_size_t, decoder_dim)
+            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
 
         return preds, alpha, (h, c)
 
 
-class ImageCaptionWithRnn(nn.Module):
+class ImageCaption(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, emb_weight = None, generator=None):
+    def __init__(self, resnet, vocab_size: int, max_len):
         super().__init__()
-        print(f"[params] emb_weight={emb_weight is not None}")
-
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
-        self.decoder = DecoderWithAttention(attention_dim=512,
+        self.decoder = DecoderWithAttention(max_len,
+                                            attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.2,
-                                            proof_of_concept=self.proof_of_concept,
-                                            emb_weight=emb_weight,
-                                            generator=generator)
+                                            dropout=0.5)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
         imgs = batch["image"]
         caps = batch["code"].long()
         caplens = batch["code_len"]
-        capltlens = batch["code_lt_len"]
-
-        batch_size = caps.size(0)
-        seq_len = caps.size(1)
-        seq_lt_len = caps.size(2)
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens, capltlens)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens)
 
-        targets = caps_sorted[:, 1:, :]
-
-        # print(scores.shape)  # (batch_size, <seq_len, <seq_lt_len, vocab_size)
-        # print(targets.shape)  # (batch_size, seq_len-1, seq_lt_len)
-        # print(decode_lengths.shape)  # (batch_size, seq_len)
-
-        xx, yy = [], []
-        for bi in range(batch_size):
-            for si in range(seq_len - 1):
-                dl = decode_lengths[bi, si + 1]
-                if dl == 0:
-                    continue
-                # print(bi, si, dl)
-                for di in range(dl):
-                    xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, di])
-                    # assert xx[-1].argmax(dim=-1) == yy[-1]
-
-        scores = torch.stack(xx)
-        targets = torch.stack(yy)
-        # print(scores.shape, targets.shape)
-
+        # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
+        targets = caps_sorted[:, 1:]
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        # scores = nn.utils.rnn.pack_padded_sequence(c, d, batch_first=True).data
-        # targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
+        scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+        targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
         # Calculate loss
         loss = self.criterion(scores, targets)

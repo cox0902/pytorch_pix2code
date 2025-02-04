@@ -86,12 +86,26 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 
+class PositionalEmbedding(nn.Module):
+    def __init__(self, max_len, emb_dim):
+        super().__init__()
+        self.embedding = nn.Parameter(torch.zeros(1, max_len, emb_dim), requires_grad=False)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, emb_dim, 2) * -(torch.log(torch.tensor(10000.0)) / emb_dim))
+        self.embedding[:, :, 0::2] = torch.sin(position * div_term)
+        self.embedding[:, :, 1::2] = torch.cos(position * div_term)
+
+    def forward(self, x):
+        return x + self.embedding[:, :x.size(1)]
+
+
 class DecoderWithAttention(nn.Module):
     """
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5):
+    def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
+                 encoder_dim=2048, dropout=0.5, pos_embed=None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -110,6 +124,11 @@ class DecoderWithAttention(nn.Module):
         self.dropout = dropout
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
+
+        if pos_embed == '1':
+            self.pos_embedding = PositionalEmbedding(max_len, embed_dim)
+        else:
+            self.pos_embedding = None
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
@@ -250,17 +269,19 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaption(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int):
+    def __init__(self, resnet, vocab_size: int, max_len, pos_embed: str = None):
         super().__init__()
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
-        self.decoder = DecoderWithAttention(attention_dim=512,
+        self.decoder = DecoderWithAttention(max_len,
+                                            attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5)
+                                            dropout=0.5,
+                                            pos_embed=pos_embed)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
