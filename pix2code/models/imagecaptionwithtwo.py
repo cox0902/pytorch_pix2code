@@ -261,7 +261,7 @@ class DecoderWithAttention(nn.Module):
                     cat = torch.cat([last_h[2][0], queue[-1][3][0]], dim=1)
                     out = self.fc(self.dropout(cat))
                     predict.append(out.squeeze(0))
-                    targets.append(torch.tensor(4))
+                    targets.append(torch.tensor(4).to(out.device))
 
                     poped = queue.pop()
                     last_h = (poped[0], poped[1], poped[2])
@@ -290,7 +290,7 @@ class DecoderWithAttention(nn.Module):
                 cat = torch.cat([init_hidden_h[0], new_hidden_v[0]], dim=1)
                 out = self.fc(self.dropout(cat))
                 predict.append(out.squeeze(0))
-                targets.append(torch.tensor(4))
+                targets.append(torch.tensor(4).to(out.device))
 
         return torch.stack(predict), torch.stack(targets)
     
