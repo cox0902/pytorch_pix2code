@@ -196,10 +196,10 @@ class DecoderWithAttention(nn.Module):
     
     def rnn_forward(self, dir, encoder_out, embeddings, hidden):
         rnn = self.decode_step_h if dir == 'hor' else self.decode_step_v
-        attw_out, _ = self.attention(encoder_out, hidden)
-        gate = self.sigmoid(self.f_beta(hidden))
+        attw_out, _ = self.attention(encoder_out, hidden[0])
+        gate = self.sigmoid(self.f_beta(hidden[0]))
         attw_out = attw_out * gate
-        return rnn(torch.cat([embeddings, attw_out], dim=1), hidden)
+        return rnn(torch.cat([embeddings[None], attw_out], dim=1), hidden)
 
     def forward(self, encoder_out, encoded_captions, caption_lengths):
         """
@@ -213,18 +213,16 @@ class DecoderWithAttention(nn.Module):
 
         batch_size = encoder_out.size(0)
         encoder_dim = encoder_out.size(-1)
-        vocab_size = self.vocab_size
 
         # Flatten image
         encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
-        num_pixels = encoder_out.size(1)
 
         # Embedding
         embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
         if self.pos_embedding is not None:
             embeddings = self.pos_embedding(embeddings)
 
-        predictions = []
+        predict = []
         targets = []
 
         for bi in range(batch_size):
@@ -240,7 +238,7 @@ class DecoderWithAttention(nn.Module):
             queue = [(encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h, init_hidden_v)]
             leaves = []
 
-            for ti in range(1, caption_lengths[bi]):
+            for ti in range(1, caption_lengths[bi] - 1):
                 token = encoded_captions[bi, ti]
                 token_embed = embeddings[bi, ti]
 
@@ -252,7 +250,7 @@ class DecoderWithAttention(nn.Module):
 
                     # move next in vertical
                     new_hidden_v = self.rnn_forward("ver", e_out, last_h[1], queue[-1][3])
-                    queue.append(last_h + [new_hidden_v])
+                    queue.append((last_h[0], last_h[1], last_h[2], new_hidden_v))
 
                     # reset horizital, TODO: pos_embedding
                     last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  
@@ -260,13 +258,22 @@ class DecoderWithAttention(nn.Module):
 
                 if token == 6:  # [RB]
                     # make prediction on horzital end
-                    torch.cat()
+                    cat = torch.cat([last_h[2][0], queue[-1][3][0]], dim=1)
+                    out = self.fc(self.dropout(cat))
+                    predict.append(out.squeeze(0))
+                    targets.append(torch.tensor(4))
 
                     poped = queue.pop()
                     last_h = (poped[0], poped[1], poped[2])
                     continue
 
                 # make prediction
+                # print(last_h[2][0].shape, queue[-1][3][0].shape)
+                cat = torch.cat([last_h[2][0], queue[-1][3][0]], dim=1)
+                out = self.fc(self.dropout(cat))
+                # print(out.shape)
+                predict.append(out.squeeze(0))
+                targets.append(token)
 
                 # move next in horzital
                 new_hidden_h = self.rnn_forward("hor", e_out, token_embed, last_h[2])
@@ -279,37 +286,13 @@ class DecoderWithAttention(nn.Module):
                 # move next in vertical
                 new_hidden_v = self.rnn_forward("ver", e_out, leaf[1], leaf[2])
 
-                # make prediction on vertical end
+                # make prediction on vertical end, TODO: pos_embedding
+                cat = torch.cat([init_hidden_h[0], new_hidden_v[0]], dim=1)
+                out = self.fc(self.dropout(cat))
+                predict.append(out.squeeze(0))
+                targets.append(torch.tensor(4))
 
-
-        # Initialize LSTM state
-        h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-
-        # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
-        # So, decoding lengths are actual lengths - 1
-        decode_lengths = (caption_lengths - 1).tolist()
-
-        # Create tensors to hold word predicion scores and alphas
-        predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
-        alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
-
-        # At each time-step, decode by
-        # attention-weighing the encoder's output based on the decoder's previous hidden state output
-        # then generate a new word in the decoder with the previous word and the attention weighted encoding
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-            attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t],
-                                                                h[:batch_size_t])
-            gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
-            attention_weighted_encoding = gate * attention_weighted_encoding
-            h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-            predictions[:batch_size_t, t, :] = preds
-            alphas[:batch_size_t, t, :] = alpha
-
-        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+        return torch.stack(predict), torch.stack(targets)
     
     def predict(self, encoder_out, captions, hiddens = None):
         # Embedding
@@ -346,7 +329,7 @@ class DecoderWithAttention(nn.Module):
         return preds, alpha, (h, c)
 
 
-class ImageCaption(nn.Module):
+class ImageCaptionWithTwo(nn.Module):
 
     def __init__(self, resnet, vocab_size: int, max_len):
         super().__init__()
@@ -369,21 +352,23 @@ class ImageCaption(nn.Module):
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens)
+        scores, targets = self.decoder(imgs, caps, caplens)
+
+        # print(scores.shape, targets.shape)
 
         # Since we decoded starting with <start>, the targets are all words after <start>, up to <end>
-        targets = caps_sorted[:, 1:]
+        # targets = caps_sorted[:, 1:]
 
         # Remove timesteps that we didn't decode at, or are pads
         # pack_padded_sequence is an easy trick to do this
-        scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
-        targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
+        # scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+        # targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
         # Calculate loss
         loss = self.criterion(scores, targets)
 
         # Add doubly stochastic attention regularization
-        loss += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+        # loss += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
 
         return {
             "loss": loss, 

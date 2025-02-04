@@ -19,7 +19,10 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn
+from pix2code.models import (
+    Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
+    ImageCaptionWithTwo
+)
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -148,6 +151,9 @@ def build_model(model: str, model_resnet: str, max_len: int, extra):
     elif model_name == "imagecaption":
         resnet = build_resnet_model(model_resnet)
         return ImageCaption(resnet, vocab_size=90, max_len=max_len, **model_params)
+    elif model_name in ["imagecaptionwithtwo", "icw2"]:
+        resnet = build_resnet_model(model_resnet)
+        return ImageCaptionWithTwo(resnet, vocab_size=90, max_len=max_len, **model_params)
     elif model_name in ["imagecaptionwithbox", "icwb"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)

@@ -5,6 +5,7 @@ from .imagecaptionwithbox import ImageCaptionWithBox
 # from .imagecaptionwithspa import ImageCaptionWithSpa
 from .imagecaptionwithrnn import ImageCaptionWithRnn
 from .imagecaptionwithmsk import ImageCaptionWithMsk
+from .imagecaptionwithtwo import ImageCaptionWithTwo
 # from .detr import Detr
 
 
@@ -16,5 +17,6 @@ __all__ = [
     # ImageCaptionWithRpn,
     # ImageCaptionWithSpa,
     ImageCaptionWithMsk,
+    ImageCaptionWithTwo,
     # Detr
 ]
