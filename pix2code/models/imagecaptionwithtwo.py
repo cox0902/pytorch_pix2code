@@ -142,7 +142,7 @@ class DecoderWithAttention(nn.Module):
 
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
-        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
+        self.fc = nn.Linear(decoder_dim * 2, vocab_size)  # linear layer to find scores over vocabulary
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -260,6 +260,7 @@ class DecoderWithAttention(nn.Module):
 
                 if token == 6:  # [RB]
                     # make prediction on horzital end
+                    torch.cat()
 
                     poped = queue.pop()
                     last_h = (poped[0], poped[1], poped[2])
