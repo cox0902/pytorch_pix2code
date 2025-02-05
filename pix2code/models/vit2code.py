@@ -239,7 +239,7 @@ class Vit2Code(nn.Module):
         tgt_out = captions[:, 1:]
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
 
-        decode_lengths = (caplens - 1)
+        decode_lengths = (caplens - 1).cpu()
         scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
         targets = nn.utils.rnn.pack_padded_sequence(tgt_out, decode_lengths, batch_first=True, enforce_sorted=False).data
 
