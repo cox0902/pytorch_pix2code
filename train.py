@@ -21,7 +21,7 @@ from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import (
     Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
-    ImageCaptionWithTwo
+    ImageCaptionWithTwo, ImageCaptionWithSpa, Vit2Code
 )
 
 
@@ -139,6 +139,10 @@ def check_model(model: str) -> Tuple[bool, bool]:
         return False, False, False
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         return True, False, True
+    elif model_name in ["imagecaptionwithspa", "icws"]:
+        return True, False, False
+    elif model_name in ["vit2code"]:
+        return False, False, False
     else:
         return False, False, False
 
@@ -164,6 +168,11 @@ def build_model(model: str, model_resnet: str, max_len: int, extra):
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)
+    elif model_name in ["imagecaptionwithspa", "icws"]:
+        resnet = build_resnet_model(model_resnet)
+        return ImageCaptionWithSpa(resnet, None, vocab_size=90, **model_params)
+    elif model_name in ["vit2code"]:
+        return Vit2Code(**model_params)
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()

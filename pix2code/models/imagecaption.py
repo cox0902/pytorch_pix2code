@@ -203,7 +203,7 @@ class DecoderWithAttention(nn.Module):
         # Embedding
         embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
 
-        if self.pos_embedding is not None:
+        if hasattr(self, "pos_embedding") and self.pos_embedding is not None:
             embeddings = self.pos_embedding(embeddings)
 
         # Initialize LSTM state
@@ -317,6 +317,24 @@ class ImageCaption(nn.Module):
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets
         }
+    
+    def get_alphas(self, batch):
+        self.eval()
+
+        imgs = batch["image"]
+        caps = batch["code"].long()
+        caplens = batch["code_len"]
+
+        # Forward prop.
+        imgs = self.encoder(imgs)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens)
+
+        return {
+            "scores": scores,
+            "targets": caps_sorted,
+            "alphas": alphas
+        }
+
     
     # def predict(self, batch, hiddens = None):
     #     imgs = batch["image"]

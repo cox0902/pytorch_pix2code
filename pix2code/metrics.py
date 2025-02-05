@@ -9,6 +9,7 @@ import torch
 from torcheval.metrics import *
 from torcheval.metrics.metric import Metric
 from torchmetrics.detection import MeanAveragePrecision
+from torchmetrics.detection.iou import IntersectionOverUnion
 
 
 class AverageMeter:
@@ -319,7 +320,7 @@ class MapScorer(Scorer):
 
     def __init__(self):
         super().__init__()
-        self.name = "MAP"
+        self.name = "map"
         self.scorer = MeanAveragePrecision()
 
     def update(self, outputs):
@@ -339,6 +340,22 @@ class MapScorer(Scorer):
 
 
 # registered_scores["map"] = MapScorer()
+
+
+class IouScorer(Scorer):
+
+    def __init__(self):
+        super().__init__()
+        self.name = "iou"
+        self.scorer = IntersectionOverUnion()
+
+    def update(self, outputs):
+        in_preds = [{} for each in outputs]
+        in_target = [{}]
+        self.scorer.update(in_preds, in_target)
+
+    def compute(self):
+        return self.scorer.compute()["iou"]
 
 
 def _handle_zero_division(x, zero_division):

@@ -25,7 +25,7 @@ class DynamicHead(nn.Module):
         activation = 'relu'
         num_heads = 6
         rcnn_head = RCNNHead(d_model, num_classes, dim_feedforward, nhead, dropout, activation)        
-        self.head_series = _get_clones(rcnn_head, num_heads                                                                                                                                    )
+        self.head_series = _get_clones(rcnn_head, num_heads)
         self.return_intermediate = False
         
         # Init parameters.
@@ -60,7 +60,7 @@ class DynamicHead(nn.Module):
         # print(init_features.shape)
         proposal_features = init_features.clone()
 
-        print(proposal_features.shape)
+        # print(proposal_features.shape)
         
         for rcnn_head in self.head_series:
             class_logits, pred_bboxes, proposal_features = rcnn_head(features, bboxes, proposal_features)
@@ -145,8 +145,8 @@ class RCNNHead(nn.Module):
         :param pro_features: (N, nr_boxes, d_model)
         """
 
-        print("bboxes", bboxes.shape)
-        print("pro_features", pro_features.shape)
+        # print("bboxes", bboxes.shape)
+        # print("pro_features", pro_features.shape)
 
         N, nr_boxes = bboxes.shape[:2]
         
@@ -155,7 +155,7 @@ class RCNNHead(nn.Module):
         for b in range(N):
             proposal_boxes.append(Boxes(bboxes[b]))
         roi_features = self.box_pooler(features, proposal_boxes)   
-        print("roi_features", roi_features.shape)  # (200, 256, 7, 7)
+        # print("roi_features", roi_features.shape)  # (200, 256, 7, 7)
         roi_features = roi_features.view(N * nr_boxes, self.d_model, -1).permute(2, 0, 1)        
 
         # self_att.
@@ -256,8 +256,8 @@ class DynamicConv(nn.Module):
         pro_features: (1,  N * nr_boxes, self.d_model)
         roi_features: (49, N * nr_boxes, self.d_model)
         '''
-        print("pro_features", pro_features.shape)
-        print("roi_features", roi_features.shape)
+        # print("pro_features", pro_features.shape)
+        # print("roi_features", roi_features.shape)
 
         features = roi_features.permute(1, 0, 2)
         parameters = self.dynamic_layer(pro_features).permute(1, 0, 2)
@@ -358,7 +358,7 @@ class Attention(nn.Module):
         # .sum(dim=1)
         aw = attention_weighted_encoding.view(batch_size, w, h, encoder_dim).permute(0, 3, 1, 2)
 
-        return attention_weighted_encoding, aw, alpha
+        return attention_weighted_encoding.sum(dim=1), aw, alpha
 
 
 class DecoderWithAttention(nn.Module):
@@ -366,8 +366,8 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, visnet, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=256, dropout=0.5,
-                 embed_parent=None):
+    def __init__(self, visnet, attention_dim, embed_dim, decoder_dim, vocab_size, 
+                 encoder_dim=256, dropout=0.5, embed_parent=None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -390,7 +390,7 @@ class DecoderWithAttention(nn.Module):
         self.embed_parent = embed_parent
 
         #
-        self.num_proposals = 100
+        self.num_proposals = 20
         self.hidden_dim = 256
 
         # Build Proposals.
@@ -527,6 +527,7 @@ class DecoderWithAttention(nn.Module):
         # then generate a new word in the decoder with the previous word and the attention weighted encoding
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
+            
             feats = []
             for each in [eo1, eo2, eo3, eo4]:
                 attention_weighted_encoding, aw, alpha = self.attention(each[:batch_size_t], h[:batch_size_t])
@@ -542,6 +543,9 @@ class DecoderWithAttention(nn.Module):
             print(outputs_class.shape, outputs_coord.shape)
             # print(outputs_coord[0])
             outputs_class, outputs_coord = outputs_class[-1], outputs_coord[-1]
+
+            print(outputs_class)
+            print(outputs_coord)
 
             # outputs_scores = torch.zeros((batch_size_t, 100), dtype=torch.float32).to(images.device)
 
@@ -565,7 +569,11 @@ class DecoderWithAttention(nn.Module):
             # print(outputs_class[topks.indices])
             # print(outputs_coord[topks.indices])
 
+
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
+            
+            # print("gate", attention_weighted_encoding.shape, gate.shape)
+            
             attention_weighted_encoding = gate * attention_weighted_encoding
             if self.embed_parent == "cat" or self.embed_parent == 1:
                 h, c = self.decode_step(
@@ -580,7 +588,7 @@ class DecoderWithAttention(nn.Module):
                 h, c = self.decode_step(
                     torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                     (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            h = self.dropout(h)
+            # h = self.dropout(h)
             # preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # (batch_size_t, vocab_size)
             # preds_box[:batch_size_t, t, :] = self.fc_box(alpha).sigmoid()
             # # preds_equ[:batch_size_t, t, :] = self.fc_equ(h)

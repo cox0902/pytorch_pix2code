@@ -123,6 +123,8 @@ class DecoderWithAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.fc_cls = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.fc_box = nn.Linear(196, 4)  #
+        # self.fc_box = nn.Linear(decoder_dim, 4)  #
+
         # self.fc_equ = nn.Linear(decoder_dim, 1)  #
         # self.fc_ign = nn.Linear(decoder_dim, 1)  #
         self.init_weights()  # initialize some layers with the uniform distribution
@@ -235,9 +237,9 @@ class DecoderWithAttention(nn.Module):
                 h, c = self.decode_step(
                     torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                     (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            h = self.dropout(h)
-            preds_cls[:batch_size_t, t, :] = self.fc_cls(h)  # (batch_size_t, vocab_size)
+            preds_cls[:batch_size_t, t, :] = self.fc_cls(self.dropout(h))  # (batch_size_t, vocab_size)
             preds_box[:batch_size_t, t, :] = self.fc_box(alpha).sigmoid()
+            # preds_box[:batch_size_t, t, :] = self.fc_box(self.dropout(h)).sigmoid()
             # preds_equ[:batch_size_t, t, :] = self.fc_equ(h)
             # preds_ign[:batch_size_t, t, :] = self.fc_ign(h)
             alphas[:batch_size_t, t, :] = alpha
