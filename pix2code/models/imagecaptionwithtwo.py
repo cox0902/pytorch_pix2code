@@ -201,7 +201,7 @@ class DecoderWithAttention(nn.Module):
         attw_out = attw_out * gate
         return rnn(torch.cat([embeddings[None], attw_out], dim=1), hidden), alpha
 
-    def forward(self, encoder_out, encoded_captions, caption_lengths):
+    def forward(self, encoder_out, encoded_captions, caption_lengths, return_alphas = False):
         """
         Forward propagation.
 
@@ -224,7 +224,8 @@ class DecoderWithAttention(nn.Module):
 
         predict = []
         targets = []
-        alphas = []
+        if return_alphas:
+            alphas = []
 
         for bi in range(batch_size):
             alphas_nb = []
@@ -235,9 +236,11 @@ class DecoderWithAttention(nn.Module):
             init_hidden_v = self.init_hidden_state_v(e_out)
 
             init_hidden_h, alpha = self.rnn_forward("hor", e_out, embeddings[bi, 0], init_hidden_h)
-            alphas_nb.append(alpha)
+            if return_alphas:
+                alphas_nb.append(alpha)
             init_hidden_v, alpha = self.rnn_forward("ver", e_out, embeddings[bi, 0], init_hidden_v)
-            alphas_nb.append(alpha)
+            if return_alphas:
+                alphas_nb.append(alpha)
             
             last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  # <START>
             queue = [(encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h, init_hidden_v)]
@@ -255,7 +258,8 @@ class DecoderWithAttention(nn.Module):
 
                     # move next in vertical
                     new_hidden_v, alpha = self.rnn_forward("ver", e_out, last_h[1], queue[-1][3])
-                    alphas_nb.append(alpha)
+                    if return_alphas:
+                        alphas_nb.append(alpha)
                     queue.append((last_h[0], last_h[1], last_h[2], new_hidden_v))
 
                     # reset horizital, TODO: pos_embedding
@@ -283,7 +287,8 @@ class DecoderWithAttention(nn.Module):
 
                 # move next in horzital
                 new_hidden_h, alpha = self.rnn_forward("hor", e_out, token_embed, last_h[2])
-                alphas_nb.append(alpha)
+                if return_alphas:
+                    alphas_nb.append(alpha)
                 last_h = (token, token_embed, new_hidden_h)  # 
 
                 # handle leaves for vertical end
@@ -292,7 +297,8 @@ class DecoderWithAttention(nn.Module):
             for leaf in leaves:
                 # move next in vertical
                 new_hidden_v, alpha = self.rnn_forward("ver", e_out, leaf[1], leaf[2])
-                alphas_nb.append(alpha)
+                if return_alphas:
+                    alphas_nb.append(alpha)
 
                 # make prediction on vertical end, TODO: pos_embedding
                 cat = torch.cat([init_hidden_h[0], new_hidden_v[0]], dim=1)
@@ -300,9 +306,12 @@ class DecoderWithAttention(nn.Module):
                 predict.append(out.squeeze(0))
                 targets.append(torch.tensor(4).to(out.device))
 
-            alphas.append(torch.stack(alphas_nb).sum(dim=0).squeeze())
+            if return_alphas:
+                alphas.append(torch.stack(alphas_nb).sum(dim=0).squeeze())
 
-        return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
+        if return_alphas:
+            return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
+        return torch.stack(predict), torch.stack(targets)
     
     def predict(self, encoder_out, captions, hiddens = None):
         # Embedding
@@ -352,7 +361,7 @@ class ImageCaptionWithTwo(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.5)
+                                            dropout=0.2)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
@@ -362,7 +371,8 @@ class ImageCaptionWithTwo(nn.Module):
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, targets, alphas = self.decoder(imgs, caps, caplens)
+        scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
+        # scores, targets, alphas = self.decoder(imgs, caps, caplens)
 
         # print(scores.shape, targets.shape)
         # print(alphas.shape)
@@ -379,7 +389,7 @@ class ImageCaptionWithTwo(nn.Module):
         loss = self.criterion(scores, targets)
 
         # Add doubly stochastic attention regularization
-        loss += self.alpha_c * ((1. - alphas) ** 2).mean()
+        # loss += self.alpha_c * ((1. - alphas) ** 2).mean()
 
         return {
             "loss": loss, 
