@@ -2,7 +2,7 @@ from .pix2code import Pix2Code
 from .imagecaption import ImageCaption
 from .imagecaptionwithbox import ImageCaptionWithBox
 # from .imagecaptionwithrpn import ImageCaptionWithRpn
-from .imagecaptionwithspa import ImageCaptionWithSpa
+# from .imagecaptionwithspa import ImageCaptionWithSpa
 from .imagecaptionwithrnn import ImageCaptionWithRnn
 from .imagecaptionwithmsk import ImageCaptionWithMsk
 from .imagecaptionwithtwo import ImageCaptionWithTwo
@@ -15,7 +15,7 @@ __all__ = [
     ImageCaptionWithBox,
     ImageCaptionWithRnn,
     # ImageCaptionWithRpn,
-    ImageCaptionWithSpa,
+    # ImageCaptionWithSpa,
     ImageCaptionWithMsk,
     ImageCaptionWithTwo,
     Vit2Code

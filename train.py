@@ -21,7 +21,7 @@ from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import (
     Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
-    ImageCaptionWithTwo, ImageCaptionWithSpa, Vit2Code
+    ImageCaptionWithTwo, Vit2Code
 )
 
 
