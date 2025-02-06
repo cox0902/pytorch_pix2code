@@ -2,6 +2,7 @@ from typing import *
 
 import argparse
 from urllib.parse import urlparse, parse_qs
+from functools import partial
 
 import json
 import numpy as np
@@ -23,6 +24,7 @@ from pix2code.models import (
     Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
     ImageCaptionWithTwo, Vit2Code
 )
+from pix2code.generators import GreedySearch, BeamSearch
 
 
 def get_args_parser() -> argparse.ArgumentParser:
@@ -164,7 +166,11 @@ def build_model(model: str, model_resnet: str, max_len: int, extra):
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
         emb_weight = np.load(extra) if extra is not None else None
-        return ImageCaptionWithRnn(resnet, vocab_size=90, emb_weight=emb_weight, **model_params)
+        generator = partial(GreedySearch, vocab_size=90, conditions=emb_weight)
+        if "generator" in model_params:
+            if model_params["generator"].startswith("beam"):
+                generator = partial(BeamSearch, vocab_size=90, beam_width=int(model_params["generator"][-1]))
+        return ImageCaptionWithRnn(resnet, vocab_size=90, generator=generator, **model_params)
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)

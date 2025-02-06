@@ -315,9 +315,20 @@ class DecoderWithAttention(nn.Module):
                     predictions[bi, t, 0, encoded_captions[bi, t + 1, 0]] = 1
             else:
                 predictions[:batch_size_t, t, 0] = preds
-            preds_tokens, sort_tokens = self.token_decoder(h, encoded_captions[:batch_size, t + 1, :], caption_lt_lengths[:batch_size_t, t + 1])
+
+            if self.training:
+                preds_tokens, sort_tokens = self.token_decoder(
+                    h, 
+                    encoded_captions[:batch_size, t + 1, :], 
+                    caption_lt_lengths[:batch_size_t, t + 1])
+                predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
+            else:
+                generator = self.generator(max_seq_len=encoded_captions.size(2) - 1)
+                _, preds_tokens = generator.search(
+                    self.token_decoder, h, 
+                    init_input=torch.argmax(predictions[:batch_size_t, t, 0], dim=-1))
+                predictions[:batch_size_t, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             # print(predictions.shape, preds.shape)
-            predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             alphas[:batch_size_t, t, :] = alpha
 
         return predictions, encoded_captions, caption_lt_lengths, alphas, sort_ind
@@ -388,11 +399,21 @@ class ImageCaptionWithRnn(nn.Module):
                 dl = decode_lengths[bi, si + 1]
                 if dl == 0:
                     continue
-                # print(bi, si, dl)
-                for di in range(dl):
+                if self.training:
+                    # print(bi, si, dl)
+                    for di in range(dl):
+                        xx.append(scores[bi, si, di, :])
+                        yy.append(targets[bi, si, di])
+                        # assert xx[-1].argmax(dim=-1) == yy[-1]
+                else:
+                    assert dl >= 2, dl
+                    for di in range(dl - 1):
+                        pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
+                        if pp == 4 or pp == 0:  # <end> or <pad>
+                            # print(f"found @ {di}")
+                            break
                     xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, di])
-                    # assert xx[-1].argmax(dim=-1) == yy[-1]
+                    yy.append(targets[bi, si, dl - 2])
 
         scores = torch.stack(xx)
         targets = torch.stack(yy)

@@ -122,7 +122,8 @@ class ViT(nn.Module):
     def forward(self, img):
         x = self.to_patch_embedding(img)
         b, n, _ = x.shape
-
+        # print(x.shape)  # (32, 256, 512)
+ 
         cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
         x = torch.cat((cls_tokens, x), dim=1)
         x += self.pos_embedding[:, :(n + 1)]
@@ -230,6 +231,7 @@ class Vit2Code(nn.Module):
         cap_mask, cap_padding_mask = create_mask(tgt_input)
 
         memory = self.encoder(img)
+        # print(memory.shape)  # (batch_size, 257, 512)
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
                             tgt_key_padding_mask = cap_padding_mask)

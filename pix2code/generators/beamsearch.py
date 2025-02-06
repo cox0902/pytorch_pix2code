@@ -11,7 +11,7 @@ class BeamSearch:
         self.vocab_size = vocab_size
         self.beam_width = beam_width
 
-    def search(self, model, images):
+    def search(self, model, images, init_input = None):
         # images: (batch_size, C, W, H)
         # model.eval() should be called outside this scope.
 
@@ -23,8 +23,11 @@ class BeamSearch:
         beam_scores = torch.zeros((batch_size, self.beam_width), dtype=torch.float, device=images.device)
         beam_scores = beam_scores.view(-1)  # (batch_size * beam_width, )
 
-        input_ids = torch.full((batch_size * self.beam_width, 1), 3, dtype=torch.long, device=images.device)
-            
+        if init_input is not None:
+            input_ids = torch.full((batch_size * self.beam_width, 1), 3, dtype=torch.long, device=images.device)
+        else:
+            input_ids = init_input[:, None].repeat_interleave(self.beam_width, dim=0)
+
         contexts: Dict[str, torch.Tensor] = model.predict_init(images)
         for k, v in contexts.items():
             contexts[k] = v.repeat_interleave(self.beam_width, dim=0)
