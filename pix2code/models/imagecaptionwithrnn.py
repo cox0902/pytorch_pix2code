@@ -394,7 +394,7 @@ class ImageCaptionWithRnn(nn.Module):
         xx, yy = [], []
         for bi in range(batch_size):
             for si in range(seq_len - 1):
-                dl = decode_lengths[bi, si + 1]
+                dl = decode_lengths[bi, si + 1] - 1
                 if dl == 0:
                     continue
                 if self.training:
