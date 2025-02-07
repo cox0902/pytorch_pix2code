@@ -371,7 +371,7 @@ class ImageCaptionWithRnn(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.2,
+                                            dropout=0.5,
                                             proof_of_concept=self.proof_of_concept,
                                             emb_weight=emb_weight,
                                             generator=generator)
