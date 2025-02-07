@@ -216,7 +216,8 @@ class DecoderWithAttention(nn.Module):
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
-        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
+        self.fc1 = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
+        self.fc2 = nn.Linear(decoder_dim, decoder_dim)
         self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, vocab_size, dropout=dropout,
                                           proof_of_concept=self.proof_of_concept, emb_weight=emb_weight)
         self.init_weights()  # initialize some layers with the uniform distribution
@@ -309,23 +310,24 @@ class DecoderWithAttention(nn.Module):
             h, c = self.decode_step(
                 torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            preds = self.fc1(self.dropout(h))  # (batch_size_t, vocab_size)
             if self.proof_of_concept:
                 for bi in range(batch_size_t):
                     predictions[bi, t, 0, encoded_captions[bi, t + 1, 0]] = 1
             else:
                 predictions[:batch_size_t, t, 0] = preds
 
+            ph = self.fc2(self.dropout(h))
             if self.training:
                 preds_tokens, sort_tokens = self.token_decoder(
-                    h, 
+                    ph, 
                     encoded_captions[:batch_size, t + 1, :], 
                     caption_lt_lengths[:batch_size_t, t + 1])
                 predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             else:
                 generator = self.generator(max_seq_len=encoded_captions.size(2) - 1)
                 _, preds_tokens = generator.search(
-                    self.token_decoder, h, 
+                    self.token_decoder, ph, 
                     init_input=torch.argmax(predictions[:batch_size_t, t, 0], dim=-1))
                 predictions[:batch_size_t, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             # print(predictions.shape, preds.shape)
