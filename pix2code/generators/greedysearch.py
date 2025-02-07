@@ -16,6 +16,7 @@ class GreedySearch:
 
         if self.conditions is not None:
             emb = torch.nn.Embedding(90, 90, _weight=torch.from_numpy(self.conditions), _freeze=True)
+            emb = emb.to(model.device)
 
         batch_size = images.size(0)
 
