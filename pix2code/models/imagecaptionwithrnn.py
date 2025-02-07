@@ -227,8 +227,10 @@ class DecoderWithAttention(nn.Module):
         Initializes some parameters with values from the uniform distribution, for easier convergence.
         """
         self.embedding.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
+        self.fc1.bias.data.fill_(0)
+        self.fc1.weight.data.uniform_(-0.1, 0.1)
+        self.fc2.bias.data.fill_(0)
+        self.fc2.weight.data.uniform_(-0.1, 0.1)
 
     def load_pretrained_embeddings(self, embeddings):
         """
