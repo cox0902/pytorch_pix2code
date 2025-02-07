@@ -419,14 +419,16 @@ class ImageCaptionWithRnn(nn.Module):
                         yy.append(targets[bi, si, di])
                         # assert xx[-1].argmax(dim=-1) == yy[-1]
                 else:
-                    assert dl >= 2, dl
-                    for di in range(dl - 1):
-                        pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
-                        if pp == 4 or pp == 0:  # <end> or <pad>
-                            # print(f"found @ {di}")
-                            break
-                    xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, dl - 2])
+                    # assert dl >= 2, dl
+                    # for di in range(dl - 1):
+                    #     pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
+                    #     if pp == 4 or pp == 0:  # <end> or <pad>
+                    #         # print(f"found @ {di}")
+                    #         break
+                    # xx.append(scores[bi, si, di, :])
+                    # yy.append(targets[bi, si, dl - 2])
+                    xx.append(scores[bi, si, 0, :])
+                    yy.append(targets[bi, si, 0])
 
         scores = torch.stack(xx)
         targets = torch.stack(yy)
