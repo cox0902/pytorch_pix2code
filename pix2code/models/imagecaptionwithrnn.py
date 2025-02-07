@@ -395,7 +395,7 @@ class ImageCaptionWithRnn(nn.Module):
         for bi in range(batch_size):
             for si in range(seq_len - 1):
                 dl = decode_lengths[bi, si + 1] - 1
-                if dl == 0:
+                if dl <= 0:
                     continue
                 if self.training:
                     # print(bi, si, dl)
@@ -404,15 +404,16 @@ class ImageCaptionWithRnn(nn.Module):
                         yy.append(targets[bi, si, di])
                         # assert xx[-1].argmax(dim=-1) == yy[-1]
                 else:
-                    assert dl >= 2, dl
+                    di = 0
                     for di in range(dl - 1):
                         pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
                         if pp == 4 or pp == 0:  # <end> or <pad>
                             # print(f"found @ {di}")
                             break
                     xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, dl - 2])
-
+                    yy.append(targets[bi, si, min(dl - 2, 0)])
+                    # print(yy[-1])
+    
         scores = torch.stack(xx)
         targets = torch.stack(yy)
         # print(scores.shape, targets.shape)
