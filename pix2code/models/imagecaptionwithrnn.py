@@ -129,6 +129,7 @@ class TokenDecoder(nn.Module):
         targets = targets[sort_ind]  # (batch_size, seq_len)
         target_lengths = target_lengths[sort_ind]
         encoder_out = encoder_out[sort_ind]
+        
 
         h, c = self.init_hidden_state(encoder_out)
 
