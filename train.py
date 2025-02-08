@@ -22,7 +22,7 @@ from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import (
     Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
-    ImageCaptionWithTwo, Vit2Code
+    ImageCaptionWithTwo, Vit2Code, ImageCaptionWithTnn
 )
 from pix2code.generators import GreedySearch, BeamSearch
 
@@ -174,6 +174,14 @@ def build_model(args, model_resnet: str, max_len: int):
             if model_params["generator"].startswith("beam"):
                 generator = partial(BeamSearch, vocab_size=90, beam_width=int(model_params["generator"][-1]))
         return ImageCaptionWithRnn(resnet, vocab_size=90, generator=generator, **model_params)
+    elif model_name in ["imagecaptionwithtnn", "icwt"]:
+        resnet = build_resnet_model(model_resnet)
+        emb_weight = np.load(args.extra) if args.extra is not None else None
+        generator = partial(GreedySearch, vocab_size=90, conditions=emb_weight)
+        if "generator" in model_params:
+            if model_params["generator"].startswith("beam"):
+                generator = partial(BeamSearch, vocab_size=90, beam_width=int(model_params["generator"][-1]))
+        return ImageCaptionWithTnn(resnet, vocab_size=90, generator=generator, **model_params)
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         resnet = build_resnet_model(model_resnet)
         return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)

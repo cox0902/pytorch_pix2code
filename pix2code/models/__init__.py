@@ -7,6 +7,7 @@ from .imagecaptionwithrnn import ImageCaptionWithRnn
 from .imagecaptionwithmsk import ImageCaptionWithMsk
 from .imagecaptionwithtwo import ImageCaptionWithTwo
 from .vit2code import Vit2Code
+from .imagecaptionwithtnn import ImageCaptionWithTnn
 
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     # ImageCaptionWithSpa,
     ImageCaptionWithMsk,
     ImageCaptionWithTwo,
-    Vit2Code
+    Vit2Code,
+    ImageCaptionWithTnn
 ]

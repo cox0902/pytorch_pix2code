@@ -1,7 +1,10 @@
+import math
+import copy
 import torch
 import torch.nn as nn
 import torchvision
 import transformers
+from torch.nn import TransformerDecoderLayer
 
 
 class Encoder(nn.Module):
@@ -86,80 +89,70 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 
-class TokenDecoder(nn.Module):
-
-    def __init__(self, embed_dim, encoder_dim, decoder_dim, attention_dim, vocab_size, 
-                 dropout=0.2, proof_of_concept=False, 
-                 enable_attention=False,
-                 *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.vocab_size = vocab_size
-        self.dropout = dropout
-        self.proof_of_concept = proof_of_concept
-
-        self.enable_attention = enable_attention
-
-        if self.enable_attention:
-            self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
-            self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
-            self.sigmoid = nn.Sigmoid()
+class PositionalEncoding(nn.Module):
+    def __init__(self,
+                 emb_size: int,
+                 dropout: float = 0.1,
+                 maxlen: int = 5000):
+        super(PositionalEncoding, self).__init__()
         
-        self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
-        self.dropout = nn.Dropout(p=self.dropout)
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
-        self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
-        self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
-        
-        self.init_weights()
+        den = torch.exp(- torch.arange(0, emb_size, 2)* math.log(10000) / emb_size)
+        pos = torch.arange(0, maxlen).reshape(maxlen, 1)
+        pos_embedding = torch.zeros((maxlen, emb_size))
+        pos_embedding[:, 0::2] = torch.sin(pos * den)
+        pos_embedding[:, 1::2] = torch.cos(pos * den)
+        pos_embedding = pos_embedding.unsqueeze(-2)
 
-    def init_weights(self):
-        self.embedding.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer('pos_embedding', pos_embedding)
 
-    def init_hidden_state(self, encoder_out):
-        h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
-        c = self.init_c(encoder_out)
-        return h, c
+    def forward(self, token_embedding):
+        return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+
+
+# helper Module to convert tensor of input indices into corresponding tensor of token embeddings
+class TokenEmbedding(nn.Module):
+    def __init__(self, vocab_size, emb_size):
+        super(TokenEmbedding, self).__init__()
+        self.embedding = nn.Embedding(vocab_size, emb_size) 
+        self.emb_size = emb_size
+
+    def forward(self, tokens):
+        return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
     
-    def forward(self, encoder_out, targets, target_lengths):
+
+class TokenDecoder(nn.Module):
+    __constants__ = ['norm']
+
+    def __init__(self, num_classes, dim, num_head, num_layers, norm=None, dropout=0.1, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.tok_emb = TokenEmbedding(num_classes, dim)
+        self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
+
+        decoder_layer = TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
+        torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
+        self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for i in range(num_layers)])
+        self.num_layers = num_layers
+        self.norm = norm
+
+        self.generator = nn.Linear(dim, num_classes)
+    
+    def forward(self, tgt, memory, memory_mask = None, memory_key_padding_mask = None):
         
-        target_lengths, sort_ind = target_lengths.sort(dim=0, descending=True)
-        targets = targets[sort_ind]  # (batch_size, seq_len)
-        target_lengths = target_lengths[sort_ind]
-        encoder_out = encoder_out[sort_ind]
+        tgt_mask, tgt_key_padding_mask = create_mask(tgt)
+        output = self.positional_encoding(self.tok_emb(tgt))
 
-        h, c = self.init_hidden_state(encoder_out)
+        for mod in self.layers:
+            output = mod(output, memory, tgt_mask=tgt_mask,
+                         memory_mask=memory_mask,
+                         tgt_key_padding_mask=tgt_key_padding_mask,
+                         memory_key_padding_mask=memory_key_padding_mask)
 
-        embeddings = self.embedding(targets)
+        if self.norm is not None:
+            output = self.norm(output)
 
-        decode_lengths = (target_lengths - 1).tolist()
-
-        predictions = torch.zeros(len(decode_lengths), max(decode_lengths), self.vocab_size).to(encoder_out.device)
-
-        for t in range(max(decode_lengths)):
-            batch_size_t = sum([l > t for l in decode_lengths])
-
-            if self.enable_attention:
-                attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
-                gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
-                attention_weighted_encoding = gate * attention_weighted_encoding
-            else:
-                attention_weighted_encoding = encoder_out[:batch_size_t]
-
-            h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                (h[:batch_size_t], c[:batch_size_t]))
-            
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-            if self.proof_of_concept:
-                for bi in range(batch_size_t):
-                    predictions[bi, t, targets[bi, t + 1]] = 1
-            else:
-                predictions[:batch_size_t, t, :] = preds
-
-        return predictions, sort_ind
+        return self.generator(output)
 
     def predict_init(self, encoder_out):
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
@@ -186,6 +179,22 @@ class TokenDecoder(nn.Module):
             "h": h,
             "c": c,
         }
+
+
+def generate_square_subsequent_mask(sz, device='cpu'):
+    r"""Generate a square mask for the sequence. The masked positions are filled with float('-inf').
+        Unmasked positions are filled with float(0.0).
+    """
+    return torch.triu(torch.full((sz, sz), float('-inf'), device=device), diagonal=1)
+    
+
+def create_mask(cap):
+    tgt_seq_len = cap.shape[1]
+
+    cap_mask = generate_square_subsequent_mask(tgt_seq_len, cap.device)
+    cap_padding_mask = (cap == 0)
+    
+    return cap_mask, cap_padding_mask
 
 
 class DecoderWithAttention(nn.Module):
@@ -225,8 +234,7 @@ class DecoderWithAttention(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.fc1 = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.fc2 = nn.Linear(decoder_dim, decoder_dim)
-        self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, attention_dim, vocab_size, dropout=dropout,
-                                          proof_of_concept=self.proof_of_concept, enable_attention=enable_attention)
+        self.token_decoder = TokenDecoder(vocab_size, 512, 8, 6)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -307,6 +315,7 @@ class DecoderWithAttention(nn.Module):
         # Create tensors to hold word predicion scores and alphas
         predictions = torch.zeros(batch_size, max(decode_lengths), max(decode_lt_lengths), vocab_size).to(encoder_out.device)
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
+        memory = None
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -327,12 +336,20 @@ class DecoderWithAttention(nn.Module):
                 predictions[:batch_size_t, t, 0] = preds
 
             ph = self.fc2(self.dropout(h))
+
+            if memory is None:
+                memory = ph[:, None, :]
+            else:
+                memory = torch.cat([memory[:batch_size_t, :, :], ph[:, None, :]], dim=1)
+
+            # print(encoded_captions[:batch_size_t, t + 1, :-1].shape, memory.shape)
+
             if self.training:
-                preds_tokens, sort_tokens = self.token_decoder(
-                    ph, 
-                    encoded_captions[:batch_size_t, t + 1, :], 
-                    caption_lt_lengths[:batch_size_t, t + 1])
-                predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
+                preds_tokens = self.token_decoder(
+                    encoded_captions[:batch_size_t, t + 1, :-1], 
+                    memory=memory)
+                # print(preds_tokens.shape)
+                predictions[:batch_size_t, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             else:
                 generator = self.generator(max_seq_len=encoded_captions.size(2) - 1)
                 _, preds_tokens = generator.search(
@@ -364,7 +381,7 @@ class DecoderWithAttention(nn.Module):
         return preds, alpha, (h, c)
 
 
-class ImageCaptionWithRnn(nn.Module):
+class ImageCaptionWithTnn(nn.Module):
 
     def __init__(self, resnet, vocab_size: int, enable_attention = None, generator=None):
         super().__init__()
