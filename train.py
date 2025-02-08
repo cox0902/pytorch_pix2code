@@ -45,6 +45,8 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--early-stop", action="store_true")
     parser.add_argument("--epochs-early-stop", default=10, type=int)
     parser.add_argument("--epochs-adjust-lr", default=4, type=int)
+    parser.add_argument("--logit-adjustment-train", type=str)
+    parser.add_argument("--logit-adjustment-valid", type=str)
 
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
@@ -149,9 +151,10 @@ def check_model(model: str) -> Tuple[bool, bool]:
         return False, False, False
 
 
-def build_model(model: str, model_resnet: str, max_len: int, extra):
-    model_name, model_params = parse_model(model)
+def build_model(args, model_resnet: str, max_len: int):
+    model_name, model_params = parse_model(args.model)
     assert model_name is not None
+
     if model_name == "pix2code":
         return Pix2Code(vocab_size=90)
     elif model_name == "imagecaption":
@@ -165,7 +168,7 @@ def build_model(model: str, model_resnet: str, max_len: int, extra):
         return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
         resnet = build_resnet_model(model_resnet)
-        emb_weight = np.load(extra) if extra is not None else None
+        emb_weight = np.load(args.extra) if args.extra is not None else None
         generator = partial(GreedySearch, vocab_size=90, conditions=emb_weight)
         if "generator" in model_params:
             if model_params["generator"].startswith("beam"):
@@ -229,7 +232,7 @@ def main(args):
 
     #
 
-    model = build_model(args.model, args.model_resnet, max_len=train_set.max_len, extra=args.extra)
+    model = build_model(args, args.model_resnet, max_len=train_set.max_len)
 
     if args.compat:
         model.criterion = nn.CrossEntropyLoss()

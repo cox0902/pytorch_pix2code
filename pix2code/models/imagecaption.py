@@ -314,6 +314,7 @@ class ImageCaption(nn.Module):
 
         return {
             "loss": loss, 
+            "logits": scores,
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets
         }

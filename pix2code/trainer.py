@@ -112,6 +112,9 @@ class Trainer:
 
         self.optimizer = optimizer
 
+        self.logit_adjustment_train = None
+        self.logit_adjustment_valid = None
+
     def adjust_learning_rate(self, shrink_factor: float):
         print("\nDECAYING learning rate...")
         for param_group in self.optimizer.param_groups:
@@ -285,7 +288,7 @@ class Trainer:
         model.eval()        
         metrics.reset(len(data_loader))
 
-        if type(metrics) == Metrics:
+        if isinstance(metrics, Metrics):
             references = []
             hypotheses = []
             total_loss = 0
@@ -297,13 +300,19 @@ class Trainer:
                 # targets = batch["target"]
                 outputs = model(batch)
 
+                if self.logit_adjustment_train is not None:
+                    outputs["logits"] = outputs["logits"] - np.log(self.logit_adjustment_train + 1e-12)
+                    if self.logit_adjustment_valid is not None:
+                        outputs["logits"] = outputs["logits"] + np.log(self.logit_adjustment_valid + 1e-12)
+                    outputs["scores"] = torch.nn.functional.softmax(outputs["logits"], dim=-1)
+
                 metrics.update(outputs)
                 # total_loss += outputs["loss"].item() * len(outputs["targets"])
 
                 if i % self.print_freq == 0:
                     print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
 
-                if type(metrics) == Metrics:
+                if isinstance(metrics, Metrics):
                     references.extend(outputs["targets"])
                     hypotheses.extend(outputs["scores"])
 
@@ -311,7 +320,7 @@ class Trainer:
                     break
 
             print(f'Validation [{i + 1}/{len(data_loader)}]\t{metrics.format()}')
-            if type(metrics) == Metrics:
+            if isinstance(metrics, Metrics):
                 total_loss = metrics.loss.avg
 
                 hypotheses = torch.stack(hypotheses)
@@ -320,7 +329,7 @@ class Trainer:
                 metrics.update({ "scores": hypotheses, "targets": references })
                 print(f'\n* {metrics.format(show_average=False, show_batch_time=False, show_loss=False)}')
 
-        if type(metrics) == Metrics:
+        if isinstance(metrics, Metrics):
             return metrics.compute(hypotheses, references), total_loss
         else:
             return metrics.compute(), 0
@@ -359,26 +368,32 @@ class Trainer:
                     activations.extend(activation[hook].squeeze().cpu().numpy())  # !! TODO: add n to squeeze
                 else:
                     outputs = model(batch)
-               
-                if type(metrics) == Metrics:
+
+                if self.logit_adjustment_train is not None:
+                    outputs["logits"] = outputs["logits"] - torch.log(torch.from_numpy(self.logit_adjustment_train) + 1e-12)
+                    if self.logit_adjustment_valid is not None:
+                        outputs["logits"] = outputs["logits"] + torch.log(torch.from_numpy(self.logit_adjustment_valid) + 1e-12)
+                    outputs["scores"] = torch.nn.functional.softmax(outputs["logits"], dim=-1)
+
+                if isinstance(metrics, Metrics):
                     metrics.update()  # 
                 else:
                     metrics.update(outputs)
 
                 if i % self.print_freq == 0:
-                    if type(metrics) == Metrics:
+                    if isinstance(metrics, Metrics):
                         print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
                     else:
                         print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format()}')
 
-                if type(metrics) == Metrics:
+                if isinstance(metrics, Metrics):
                     references.extend(outputs[name_refs])
                     hypotheses.extend(outputs[name_hyps])
 
                 if proof_of_concept:
                     break
 
-            if type(metrics) == Metrics:
+            if isinstance(metrics, Metrics):
                 print(f'Test [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
 
                 hypotheses = torch.stack(hypotheses)
