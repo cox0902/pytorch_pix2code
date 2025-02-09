@@ -384,7 +384,7 @@ class DecoderWithAttention(nn.Module):
                 generator = self.generator(max_seq_len=self.max_len_lt - 1)
                 _, out_scores, out_length = generator.search(
                     self.token_decoder, ph, 
-                    init_input=torch.argmax(predictions[:batch_size_t, t, 0], dim=-1))
+                    init_input=torch.argmax(predictions[:batch_size_t, t], dim=-1))
                 for bi in range(batch_size_t):
                     predictions[bi, t, :] = out_scores[bi, out_length[bi] - 2, :]
 
