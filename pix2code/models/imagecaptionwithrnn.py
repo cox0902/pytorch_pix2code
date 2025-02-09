@@ -92,13 +92,14 @@ class TokenDecoder(nn.Module):
                  dropout=0.2, proof_of_concept=False, 
                  enable_attention=False,
                  enable_encoder=False,
+                 tf_token_decoder=1.0,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
         self.dropout = dropout
         self.proof_of_concept = proof_of_concept
-
         self.enable_attention = enable_attention
+        self.tf_token_decoder = tf_token_decoder
 
         if self.enable_attention:
             self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
@@ -155,11 +156,20 @@ class TokenDecoder(nn.Module):
             batch_size_t = sum([l > t for l in decode_lengths])
 
             if self.enable_attention:
-                attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
+                attention_weighted_encoding, _ = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
                 gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
                 attention_weighted_encoding = gate * attention_weighted_encoding
             else:
                 attention_weighted_encoding = encoder_out[:batch_size_t]
+
+            ta_embeddings = embeddings[:batch_size_t, t, :]
+            if self.training and t != 0:
+                tf_preds = torch.argmax(predictions[:batch_size_t, t - 1, :], dim=-1)
+                tf_embeddings = self.embedding(tf_preds)
+                tf_mask = (torch.rand(batch_size_t) < self.tf_token_decoder)
+                tf_embeddings[tf_mask, :] = ta_embeddings[tf_mask, :] 
+            else:
+                tf_embeddings = ta_embeddings
 
             h, c = self.decode_step(
                 torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
@@ -172,7 +182,7 @@ class TokenDecoder(nn.Module):
             else:
                 predictions[:batch_size_t, t, :] = preds
 
-        return predictions, sort_ind
+        return predictions[sort_ind, :, :]
 
     def predict_init(self, encoder_out):
 
@@ -195,7 +205,7 @@ class TokenDecoder(nn.Module):
         embeddings = self.embedding(inputs[:, -1])
 
         if self.enable_attention:
-            attention_weighted_encoding, alpha = self.attention(contexts["encoder_out"], contexts["h"])
+            attention_weighted_encoding, _ = self.attention(contexts["encoder_out"], contexts["h"])
             gate = self.sigmoid(self.f_beta(contexts["h"]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
         else:
@@ -232,7 +242,11 @@ class DecoderWithAttention(nn.Module):
                  enable_attention = False, 
                  enable_fc = False,
                  enable_encoder = False,
-                 generator = None):
+                 generator = None,
+                 tf_decoder = 1.0,
+                 tf_token_decoder = 1.0,
+                 ignore_control_tokens = False
+    ):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -253,6 +267,8 @@ class DecoderWithAttention(nn.Module):
         self.proof_of_concept = proof_of_concept
         self.generator = generator
         self.enable_encoder = enable_encoder
+        self.tf_decoder = tf_decoder
+        self.ignore_control_tokens = ignore_control_tokens
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
 
@@ -272,7 +288,8 @@ class DecoderWithAttention(nn.Module):
                                           vocab_size, dropout=dropout,
                                           proof_of_concept=self.proof_of_concept, 
                                           enable_attention=enable_attention,
-                                          enable_encoder=enable_encoder)
+                                          enable_encoder=enable_encoder,
+                                          tf_token_decoder=tf_token_decoder)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -373,11 +390,24 @@ class DecoderWithAttention(nn.Module):
         # then generate a new word in the decoder with the previous word and the attention weighted encoding
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
-            attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
+
+            attention_weighted_encoding, alpha = self.attention(
+                encoder_out[:batch_size_t], h[:batch_size_t])
             gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
+            alphas[:batch_size_t, t, :] = alpha
+
+            if self.training and t != 0:
+                tf_preds = torch.argmax(predictions[:batch_size_t, t - 1, 0, :], dim=-1)
+                tf_embeddings = self.embedding(tf_preds)
+                ta_embeddings = embeddings[:batch_size_t, t, :]
+                tf_mask = (torch.rand(batch_size_t) < self.tf_decoder)
+                tf_embeddings[tf_mask, :] = ta_embeddings[tf_mask, :] 
+            else:
+                tf_embeddings = embeddings[:batch_size_t, t, :]
+
             h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                torch.cat([tf_embeddings, attention_weighted_encoding], dim=1),
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             preds = self.fc1(self.dropout(h))  # (batch_size_t, vocab_size)
 
@@ -386,42 +416,52 @@ class DecoderWithAttention(nn.Module):
                     for bi in range(batch_size_t):
                         predictions[bi, t, 0, captions[bi, t + 1, 0]] = 1
                 else:
-                    predictions[:batch_size_t, t, 0] = preds
+                    predictions[:batch_size_t, t, 0, :] = preds
             else:
                 if self.proof_of_concept:
                     for bi in range(batch_size_t):
                         predictions[bi, t, captions[bi, t + 1]] = 1
                 else:
-                    predictions[:batch_size_t, t] = preds
+                    predictions[:batch_size_t, t, :] = preds
+                
+                preds_captions = torch.argmax(
+                    torch.nn.functional.softmax(predictions[:batch_size_t, t, :], dim=-1), dim=-1)
+                # print(preds_captions.shape, batch_size_t)
+
+            if self.training:
+                indices = torch.where(captions[:batch_size_t, t + 1, 0] != 4)[0]
+            else:
+                indices = torch.where(preds_captions != 4)[0]
+            if indices.size(0) == 0:
+                continue
 
             if self.fc2 is not None:
-                ph = self.fc2(self.dropout(h))
+                ph = self.fc2(self.dropout(h[indices, :]))
             else:
-                ph = h
+                ph = h[indices, :]
 
             if self.enable_encoder:
                 if memory is None:
                     memory = ph[:, None, :]
                 else:
-                    memory = torch.cat([memory[:batch_size_t, :, :], ph[:, None, :]], dim=1)
+                    memory = torch.cat([memory[indices, :, :], ph[:, None, :]], dim=1)
                 ph = memory
 
             if self.training:
-                preds_tokens, sort_tokens = self.token_decoder(
+                preds_tokens = self.token_decoder(
                     ph, 
-                    captions[:batch_size_t, t + 1, :], 
-                    caption_lt_lengths[:batch_size_t, t + 1])
-                predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
+                    captions[indices, t + 1, :], 
+                    caption_lt_lengths[indices, t + 1])
+                predictions[indices, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             else:
                 generator = self.generator(max_seq_len=self.max_len_lt - 1)
-                _, out_scores, out_length = generator.search(
-                    self.token_decoder, ph, 
-                    init_input=torch.argmax(predictions[:batch_size_t, t], dim=-1))
-                for bi in range(batch_size_t):
-                    predictions[bi, t, :] = out_scores[bi, out_length[bi] - 2, :]
+                for bi in indices:
+                    _, out_scores, out_length = generator.search(
+                        self.token_decoder, ph[bi][None], 
+                        init_input=preds_captions[bi])
+                    predictions[bi, t, :] = out_scores[0, out_length[0] - 2, :]
 
             # print(predictions.shape, preds.shape)
-            alphas[:batch_size_t, t, :] = alpha
 
         if self.training:
             return predictions, captions, caption_lt_lengths, alphas, sort_ind
@@ -457,21 +497,27 @@ class ImageCaptionWithRnn(nn.Module):
                  enable_attention = None, 
                  enable_fc = None, 
                  enable_encoder = None,
+                 tf_decoder = None,
+                 tf_token_decoder = None,
                  generator=None):
         super().__init__()
 
         self.enable_attention = (enable_attention == "1")
         self.enable_fc = (enable_fc == '1')
         self.enable_encoder = (enable_encoder == '1')
+        self.tf_decoder = (float(tf_decoder) if tf_decoder is not None else 1.0)
+        self.tf_token_decoder = (float(tf_token_decoder) if tf_token_decoder is not None else 1.0)
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "enable_attention": self.enable_attention,
                 "enable_fc": self.enable_fc,
-                "enable_encoder": self.enable_encoder
+                "enable_encoder": self.enable_encoder,
+                "tf_decoder": self.tf_decoder,
+                "tf_token_decoder": self.tf_token_decoder,
             }.items()
         ])))
 
-        self.proof_of_concept: bool = False
+        self.proof_of_concept: bool = True
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.alpha_c = 1.
@@ -486,7 +532,9 @@ class ImageCaptionWithRnn(nn.Module):
                                             enable_attention=self.enable_attention,
                                             enable_fc=self.enable_fc,
                                             enable_encoder=self.enable_encoder,
-                                            generator=generator)
+                                            generator=generator,
+                                            tf_decoder=self.tf_decoder,
+                                            tf_token_decoder=self.tf_token_decoder)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
@@ -531,6 +579,7 @@ class ImageCaptionWithRnn(nn.Module):
                             xx.append(scores[bi, si, di, :])
                             yy.append(targets[bi, si, di])
                             # assert xx[-1].argmax(dim=-1) == yy[-1]
+                        # print(torch.argmax(xx[-1], dim=-1), yy[-1])
             scores = torch.stack(xx)
             targets = torch.stack(yy)
         else:

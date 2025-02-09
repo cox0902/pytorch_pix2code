@@ -124,9 +124,12 @@ class ImageCodeDataset(Dataset):
                 for i in range(item["code_len"]):
                     lts = self.label_trans[code[i]][::-1]
                     new_code_train[i, :len(lts)] = lts
-                    new_code_train[i, len(lts)] = 4  # <eos>
                     new_code_valid[i] = new_code_train[i, 0] 
-                    new_code_lt_len[i] = len(lts) + 1
+                    if code[i] != 4:
+                        new_code_train[i, len(lts)] = 4  # <eos>
+                        new_code_lt_len[i] = len(lts) + 1
+                    else:
+                        new_code_lt_len[i] = len(lts)
                 item["code_train"] = new_code_train
                 item["code_valid"] = new_code_valid
                 item["code_lt_len"] = new_code_lt_len 
@@ -172,7 +175,7 @@ class ImageCodeDataset(Dataset):
                 item["mask"] = masks
             #
             if self.is_short:
-                mask = Image.new("L", (image.size(1), image.size(2)), 0)
+                # mask = Image.new("L", (image.size(1), image.size(2)), 0)
 
                 pid = self.pid[code_idx]
                 piv = self.piv[code_idx]
@@ -182,15 +185,22 @@ class ImageCodeDataset(Dataset):
                         self.labels[:, 1] == pid
                     ))
                     assert len(loc[0]) == 1
-                    rect = self.rects[loc[0]]
+                    rect = self.rects[loc[0]][0]
                 else:
                     rect = (0, 0, image.size(1) - 1, image.size(2) - 1)
 
-                mask_draw = ImageDraw.Draw(mask)
-                mask_draw.rectangle(rect, fill=255)
+                # mask_draw = ImageDraw.Draw(mask)
+                # mask_draw.rectangle(rect, fill=255)
             
-                mask = torch.FloatTensor(np.asarray(mask) / 255.)
-                mask = mask.unsqueeze(0)
+                # mask = torch.FloatTensor(np.asarray(mask) / 255.)
+                # mask = mask.unsqueeze(0)
+
+                mask = np.zeros((256, 256), dtype=np.float32)
+                x0, y0, x1, y1 = np.clip(rect, 0, 255)
+                x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                mask[y0:y1 + 1, x0:x1 + 1] = 1.0
+                mask = torch.FloatTensor(mask).unsqueeze(0)
+
                 item["image"] = torch.cat([item["image"], mask], dim=0)
                 item["pid"] = pid
                 item["piv"] = piv if pid != -1 else 3
