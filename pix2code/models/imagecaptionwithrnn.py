@@ -383,12 +383,20 @@ class ImageCaptionWithRnn(nn.Module):
     def __init__(self, resnet, vocab_size: int, 
                  enable_attention = None, 
                  enable_fc = None, 
+                 enable_encoder = None,
                  generator=None):
         super().__init__()
 
         self.enable_attention = (enable_attention == "1")
         self.enable_fc = (enable_fc == '1')
-        print(f"[params] enable_attention={self.enable_attention}, enable_fc={self.enable_fc}")
+        self.enable_encoder = (enable_encoder == '1')
+        print("[params] {}".format(", ".join([
+            f"{k}={v}" for k, v in {
+                "enable_attention": self.enable_attention,
+                "enable_fc": self.enable_fc,
+                "enable_encoder": self.enable_encoder
+            }.items()
+        ])))
 
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
