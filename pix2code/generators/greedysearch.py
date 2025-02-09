@@ -36,7 +36,7 @@ class GreedySearch:
             if mask.sum() == 0:
                 break
 
-            selected_inputs = inputs[mask, t - 1]
+            selected_inputs = inputs[mask, :t]
             selected_contexts = { k: v[mask] for k, v in contexts.items() }
 
             outputs, scores, next_contexts = model.predict_next(selected_inputs, selected_contexts)

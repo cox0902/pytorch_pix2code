@@ -129,7 +129,7 @@ class TokenDecoder(nn.Module):
         targets = targets[sort_ind]  # (batch_size, seq_len)
         target_lengths = target_lengths[sort_ind]
         encoder_out = encoder_out[sort_ind]
-        
+
 
         h, c = self.init_hidden_state(encoder_out)
 
@@ -173,7 +173,7 @@ class TokenDecoder(nn.Module):
 
     def predict_next(self, inputs, contexts):
         
-        embeddings = self.embedding(inputs)
+        embeddings = self.embedding(inputs[:, -1])
 
         # with torch.no_grad() should be called outside this scope.
         h, c = self.decode_step(torch.cat([embeddings, contexts["encoder_out"]], dim=1), 
@@ -195,7 +195,10 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 proof_of_concept: bool = False, enable_attention = False, generator = None):
+                 proof_of_concept: bool = False, 
+                 enable_attention = False, 
+                 enable_fc = False,
+                 generator = None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -225,9 +228,14 @@ class DecoderWithAttention(nn.Module):
         self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
         self.sigmoid = nn.Sigmoid()
         self.fc1 = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.fc2 = nn.Linear(decoder_dim, decoder_dim)
-        self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, attention_dim, vocab_size, dropout=dropout,
-                                          proof_of_concept=self.proof_of_concept, enable_attention=enable_attention)
+        if enable_fc:
+            self.fc2 = nn.Linear(decoder_dim, decoder_dim)
+        else:
+            self.fc2 = None
+        self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, attention_dim, 
+                                          vocab_size, dropout=dropout,
+                                          proof_of_concept=self.proof_of_concept, 
+                                          enable_attention=enable_attention)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -237,8 +245,9 @@ class DecoderWithAttention(nn.Module):
         self.embedding.weight.data.uniform_(-0.1, 0.1)
         self.fc1.bias.data.fill_(0)
         self.fc1.weight.data.uniform_(-0.1, 0.1)
-        self.fc2.bias.data.fill_(0)
-        self.fc2.weight.data.uniform_(-0.1, 0.1)
+        if self.fc2 is not None:
+            self.fc2.bias.data.fill_(0)
+            self.fc2.weight.data.uniform_(-0.1, 0.1)
 
     def load_pretrained_embeddings(self, embeddings):
         """
@@ -327,7 +336,11 @@ class DecoderWithAttention(nn.Module):
             else:
                 predictions[:batch_size_t, t, 0] = preds
 
-            ph = self.fc2(self.dropout(h))
+            if self.fc2 is not None:
+                ph = self.fc2(self.dropout(h))
+            else:
+                ph = h
+
             if self.training:
                 preds_tokens, sort_tokens = self.token_decoder(
                     ph, 
@@ -367,11 +380,15 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithRnn(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, enable_attention = None, generator=None):
+    def __init__(self, resnet, vocab_size: int, 
+                 enable_attention = None, 
+                 enable_fc = None, 
+                 generator=None):
         super().__init__()
-        print(f"[params] enable_attention={enable_attention == '1'}")
 
         self.enable_attention = (enable_attention == "1")
+        self.enable_fc = (enable_fc == '1')
+        print(f"[params] enable_attention={self.enable_attention}, enable_fc={self.enable_fc}")
 
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
@@ -384,6 +401,7 @@ class ImageCaptionWithRnn(nn.Module):
                                             dropout=0.5,
                                             proof_of_concept=self.proof_of_concept,
                                             enable_attention=enable_attention,
+                                            enable_fc=enable_fc,
                                             generator=generator)
         self.criterion = nn.CrossEntropyLoss()
         

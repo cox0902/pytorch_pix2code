@@ -238,7 +238,7 @@ class DecoderWithAttention(nn.Module):
     def predict(self, encoder_out, captions, hiddens = None):
         # Embedding
         # print(captions.shape)
-        embeddings = self.embedding(captions)  # (batch_size, embed_dim)
+        embeddings = self.embedding(captions[:, -1])  # (batch_size, embed_dim)
         # print(embeddings.shape)
 
         # Initialize LSTM state

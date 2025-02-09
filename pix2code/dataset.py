@@ -24,13 +24,16 @@ def box_cxcywh_to_xyxy(x):
 class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
-                 label_trans = None,
+                 label_trans = None, multi_label: bool = False, label_aug_prob: float = None,
                  has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
         self.split = split
         self.transform = transform
+
+        self.multi_label = multi_label
+        self.label_aug_prob = label_aug_prob
         
         self.label_trans = label_trans
         if self.label_trans is not None:
@@ -109,15 +112,21 @@ class ImageCodeDataset(Dataset):
             }
 
         if self.label_trans is not None:
-            new_code = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
-            new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
-            for i in range(item["code_len"]):
-                lts = self.label_trans[code[i]][::-1]
-                new_code[i, :len(lts)] = lts
-                new_code[i, len(lts)] = 4  # <eos>
-                new_code_lt_len[i] = len(lts) + 1
-            item["code"] = new_code
-            item["code_lt_len"] = new_code_lt_len 
+            if self.label_aug_prob is not None:
+                for i in range(1, item["code_len"] - 1):
+                    if np.random.rand() < self.label_aug_prob:
+                        item["code"][i] = np.random.choice(self.label_trans[item["code"][i]])
+
+            if self.multi_label:
+                new_code = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+                new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
+                for i in range(item["code_len"]):
+                    lts = self.label_trans[code[i]][::-1]
+                    new_code[i, :len(lts)] = lts
+                    new_code[i, len(lts)] = 4  # <eos>
+                    new_code_lt_len[i] = len(lts) + 1
+                item["code"] = new_code
+                item["code_lt_len"] = new_code_lt_len 
 
         if self.has_rect:
             #

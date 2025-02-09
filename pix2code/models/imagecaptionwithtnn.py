@@ -155,30 +155,19 @@ class TokenDecoder(nn.Module):
         return self.generator(output)
 
     def predict_init(self, encoder_out):
-        h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        
         return {
             "encoder_out": encoder_out,
-            "h": h,
-            "c": c,
         }
 
     def predict_next(self, inputs, contexts):
-        
-        embeddings = self.embedding(inputs)
+        # print(inputs.shape)
 
         # with torch.no_grad() should be called outside this scope.
-        h, c = self.decode_step(torch.cat([embeddings, contexts["encoder_out"]], dim=1), 
-                                (contexts["h"], contexts["c"]))
-
-        scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-
+        outs = self(inputs, contexts["encoder_out"])
+        scores = outs[:, -1, :]
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         
-        return predicts, scores, {
-            "h": h,
-            "c": c,
-        }
+        return predicts, scores, {}
 
 
 def generate_square_subsequent_mask(sz, device='cpu'):
@@ -353,7 +342,7 @@ class DecoderWithAttention(nn.Module):
             else:
                 generator = self.generator(max_seq_len=encoded_captions.size(2) - 1)
                 _, preds_tokens = generator.search(
-                    self.token_decoder, ph, 
+                    self.token_decoder, memory, 
                     init_input=torch.argmax(predictions[:batch_size_t, t, 0], dim=-1))
                 predictions[:batch_size_t, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             # print(predictions.shape, preds.shape)

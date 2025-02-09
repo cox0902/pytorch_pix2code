@@ -35,7 +35,7 @@ class BeamSearch:
         cur_len = 1
         while cur_len < self.max_seq_len - 1:
 
-            outputs, scores, next_contexts = model.predict_next(input_ids[:, -1], contexts)
+            outputs, scores, next_contexts = model.predict_next(input_ids, contexts)
 
             scores = torch.nn.functional.log_softmax(scores, dim=-1)  # (batch_size * beam_width, vocab_size)
 
