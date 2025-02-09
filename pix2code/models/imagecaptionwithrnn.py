@@ -517,7 +517,7 @@ class ImageCaptionWithRnn(nn.Module):
             }.items()
         ])))
 
-        self.proof_of_concept: bool = True
+        self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.alpha_c = 1.
