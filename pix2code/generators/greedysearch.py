@@ -26,9 +26,12 @@ class GreedySearch:
         else:
             inputs[:, 0] = init_input
 
-        output_scores = torch.zeros((batch_size, self.max_seq_len - 1, self.vocab_size), dtype=torch.float).to(images.device)
+        output_scores = torch.zeros((batch_size, self.max_seq_len, self.vocab_size), dtype=torch.float).to(images.device)
+        for bt in range(batch_size):
+            output_scores[bt, 0, inputs[bt, 0]] = 1.
 
         mask = torch.ones((batch_size, ), dtype=torch.bool)
+        length = torch.ones((batch_size, ), dtype=torch.int)
 
         contexts: Dict[str, torch.Tensor] = model.predict_init(images)
 
@@ -54,7 +57,8 @@ class GreedySearch:
                 outputs = torch.argmax(scores, dim=-1)
 
             inputs[mask, t] = outputs
-            output_scores[mask, t - 1] = scores
+            length[mask] = t + 1
+            output_scores[mask, t] = scores
             for k, v in next_contexts.items():
                 contexts[k][mask] = v
 
@@ -66,6 +70,7 @@ class GreedySearch:
         mask[indices] = 1
         inputs[mask, -1] = 4  # <end>   
         output_scores[mask, -1, 4] = 1.     
+        length[mask] = self.max_seq_len
 
-        return inputs, output_scores
+        return inputs, output_scores, length
             

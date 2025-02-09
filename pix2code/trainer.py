@@ -565,19 +565,28 @@ class Trainer:
         metrics = EmptyMetrics()
         metrics.reset(len(data_loader))
 
-        predicts_collected = []
-        targets_collected = []
+        outputs = {
+            "predicts": [],
+            "predicts_length": [],
+            "scores": [],
+        }
 
         with torch.no_grad():
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
 
-                predicts = generator.search(model, batch["image"])
+                predicts, scores, predicts_length = generator.search(model, batch["image"])
 
-                predicts_collected.extend(predicts.cpu())
+                outputs["predicts"].extend(predicts.cpu())
+                outputs["predicts_length"].extend(predicts_length.cpu())
+                outputs["scores"].extend(scores.cpu())
 
                 if "code" in batch:
-                    targets_collected.extend(batch["code"].cpu())
+                    if "targets" not in outputs:
+                        outputs["targets"] = []
+                        outputs["targets_length"] = []
+                    outputs["targets"].extend(batch["code"].cpu())
+                    outputs["targets_length"].extend(batch["code_len"].cpu())
 
                 metrics.update()  # 
 
@@ -588,5 +597,5 @@ class Trainer:
                     break
 
         print(f'Predict [{i + 1}/{len(data_loader)}] {metrics.format(show_scores=False, show_loss=False)}')
-        return predicts_collected, targets_collected
+        return outputs
         

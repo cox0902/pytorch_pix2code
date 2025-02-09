@@ -21,6 +21,7 @@ from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetr
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import (
+    get_model_class_by_name,
     Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
     ImageCaptionWithTwo, Vit2Code, ImageCaptionWithTnn
 )
@@ -130,66 +131,60 @@ def build_resnet_model(model_resnet: str, verbose: bool = True):
 
 
 def check_model(model: str) -> Tuple[bool, bool]:
-    # returns (has_rect, norm_rect, mask_rect)
+    # returns (has_rect, norm_rect, mask_rect, multi_label)
     model_name, model_params = parse_model(model)
     assert model_name is not None
     if model_name == "pix2code":
-        return False, False, False
+        return False, False, False, False
     elif model_name == "imagecaption":
-        return False, False, False
+        return False, False, False, False
     elif model_name in ["imagecaptionwithbox", "icwb"]:
-        return True, True, False
+        return True, True, False, False
     elif model_name in ["imagecaptionwithrnn", "icwr"]:
-        return False, False, False
+        return False, False, False, True
+    elif model_name in ["imagecaptionwithtnn", "icwt"]:
+        return False, False, False, True
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
-        return True, False, True
+        return True, False, True, False
     elif model_name in ["imagecaptionwithspa", "icws"]:
-        return True, False, False
+        return True, False, False, False
     elif model_name in ["vit2code"]:
-        return False, False, False
+        return False, False, False, False
     else:
-        return False, False, False
+        return False, False, False, False
 
 
-def build_model(args, model_resnet: str, max_len: int):
+def build_model(args, data_set):
     model_name, model_params = parse_model(args.model)
     assert model_name is not None
 
-    if model_name == "pix2code":
-        return Pix2Code(vocab_size=90)
-    elif model_name == "imagecaption":
-        resnet = build_resnet_model(model_resnet)
-        return ImageCaption(resnet, vocab_size=90, max_len=max_len, **model_params)
-    elif model_name in ["imagecaptionwithtwo", "icw2"]:
-        resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithTwo(resnet, vocab_size=90, max_len=max_len, **model_params)
-    elif model_name in ["imagecaptionwithbox", "icwb"]:
-        resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithBox(resnet, vocab_size=90, **model_params)
-    elif model_name in ["imagecaptionwithrnn", "icwr"]:
-        resnet = build_resnet_model(model_resnet)
-        emb_weight = np.load(args.extra) if args.extra is not None else None
-        generator = partial(GreedySearch, vocab_size=90, conditions=emb_weight)
-        if "generator" in model_params:
-            if model_params["generator"].startswith("beam"):
-                generator = partial(BeamSearch, vocab_size=90, beam_width=int(model_params["generator"][-1]))
-        return ImageCaptionWithRnn(resnet, vocab_size=90, generator=generator, **model_params)
-    elif model_name in ["imagecaptionwithtnn", "icwt"]:
-        resnet = build_resnet_model(model_resnet)
-        emb_weight = np.load(args.extra) if args.extra is not None else None
-        generator = partial(GreedySearch, vocab_size=90, conditions=emb_weight)
-        if "generator" in model_params:
-            if model_params["generator"].startswith("beam"):
-                generator = partial(BeamSearch, vocab_size=90, beam_width=int(model_params["generator"][-1]))
-        return ImageCaptionWithTnn(resnet, vocab_size=90, generator=generator, **model_params)
-    elif model_name in ["imagecaptionwithmsk", "icwm"]:
-        resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithMsk(resnet, vocab_size=90, **model_params)
-    elif model_name in ["imagecaptionwithspa", "icws"]:
-        resnet = build_resnet_model(model_resnet)
-        return ImageCaptionWithSpa(resnet, None, vocab_size=90, **model_params)
-    elif model_name in ["vit2code"]:
-        return Vit2Code(**model_params)
+    model_resnet = args.model_resnet
+    if model_resnet is not None:
+        model_params["resnet"] = build_resnet_model(model_resnet)
+    
+    model_params["vocab_size"] = 90
+    
+    model_params["max_len"] = data_set.max_len
+    
+    if args.code_lt_path is not None:
+        model_params["max_len_lt"] = data_set.max_len_lt
+
+    if "generator" in model_params:
+        if model_params["generator"].startswith("beam"):
+            model_params["generator"] = partial(
+                BeamSearch, 
+                vocab_size=model_params["vocab_size"], 
+                beam_width=int(model_params["generator"][-1]))
+        else:
+            emb_weight = np.load(args.extra) if args.extra is not None else None
+            model_params["generator"] = partial(
+                GreedySearch, 
+                vocab_size=model_params["vocab_size"], 
+                conditions=emb_weight)
+
+    model_class = get_model_class_by_name(model_name)
+    if model_class is not None:
+        return model_class(**model_params)
     else:
         t = Trainer.load_checkpoint(model_name)
         return t.get_inner_model()
@@ -202,7 +197,7 @@ def main(args):
 
     #
 
-    has_rect, norm_rect, mask_rect = check_model(args.model)
+    has_rect, norm_rect, mask_rect, multi_label = check_model(args.model)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
@@ -221,7 +216,7 @@ def main(args):
     has_comma = (not args.no_comma)
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
-                                 label_trans=code_lt,
+                                 label_trans=code_lt, multi_label=multi_label,
                                  has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
@@ -240,7 +235,7 @@ def main(args):
 
     #
 
-    model = build_model(args, args.model_resnet, max_len=train_set.max_len)
+    model = build_model(args, train_set)
 
     if args.compat:
         model.criterion = nn.CrossEntropyLoss()

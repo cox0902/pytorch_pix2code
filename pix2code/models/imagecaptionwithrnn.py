@@ -91,6 +91,7 @@ class TokenDecoder(nn.Module):
     def __init__(self, embed_dim, encoder_dim, decoder_dim, attention_dim, vocab_size, 
                  dropout=0.2, proof_of_concept=False, 
                  enable_attention=False,
+                 enable_encoder=False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
@@ -106,6 +107,10 @@ class TokenDecoder(nn.Module):
         
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
+
+        if enable_encoder:
+            self.encode_step = nn.LSTMCell(encoder_dim, encoder_dim, bias=True)
+
         self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
@@ -194,7 +199,14 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
+    def __init__(self, 
+                 attention_dim, 
+                 embed_dim, 
+                 decoder_dim, 
+                 vocab_size, 
+                 max_len_lt,
+                 encoder_dim=2048, 
+                 dropout=0.5,
                  proof_of_concept: bool = False, 
                  enable_attention = False, 
                  enable_fc = False,
@@ -215,9 +227,11 @@ class DecoderWithAttention(nn.Module):
         self.embed_dim = embed_dim
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
+        self.max_len_lt = max_len_lt
         self.dropout = dropout
         self.proof_of_concept = proof_of_concept
         self.generator = generator
+        self.enable_encoder = enable_encoder
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
 
@@ -236,7 +250,8 @@ class DecoderWithAttention(nn.Module):
         self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, attention_dim, 
                                           vocab_size, dropout=dropout,
                                           proof_of_concept=self.proof_of_concept, 
-                                          enable_attention=enable_attention)
+                                          enable_attention=enable_attention,
+                                          enable_encoder=enable_encoder)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -279,7 +294,7 @@ class DecoderWithAttention(nn.Module):
         c = self.init_c(mean_encoder_out)
         return h, c
 
-    def forward(self, encoder_out, encoded_captions, caption_lengths, caption_lt_lengths):
+    def forward(self, encoder_out, captions, caption_lengths, caption_lt_lengths):
         """
         Forward propagation.
 
@@ -300,11 +315,15 @@ class DecoderWithAttention(nn.Module):
         # Sort input data by decreasing lengths; why? apparent below
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         encoder_out = encoder_out[sort_ind]
-        encoded_captions = encoded_captions[sort_ind]
-        caption_lt_lengths = caption_lt_lengths[sort_ind]
+        captions = captions[sort_ind]
+        if self.training:
+            caption_lt_lengths = caption_lt_lengths[sort_ind]
 
         # Embedding
-        embeddings = self.embedding(encoded_captions[:, :, 0])  # (batch_size, max_caption_length, embed_dim)
+        if self.training:
+            embeddings = self.embedding(captions[:, :, 0])  # (batch_size, max_caption_length, embed_dim)
+        else:
+            embeddings = self.embedding(captions)  # (batch_size, max_caption_length, embed_dim)
         # print(embeddings.shape)
 
         # Initialize LSTM state
@@ -313,10 +332,15 @@ class DecoderWithAttention(nn.Module):
         # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
-        decode_lt_lengths = caption_lt_lengths.flatten().tolist()
+        if self.training:
+            decode_lt_lengths = caption_lt_lengths.flatten().tolist()
 
-        # Create tensors to hold word predicion scores and alphas
-        predictions = torch.zeros(batch_size, max(decode_lengths), max(decode_lt_lengths), vocab_size).to(encoder_out.device)
+        if self.training:
+            # Create tensors to hold word predicion scores and alphas
+            predictions = torch.zeros(batch_size, max(decode_lengths), max(decode_lt_lengths), vocab_size).to(encoder_out.device)
+        else:
+            predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
+        
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
         # At each time-step, decode by
@@ -331,11 +355,19 @@ class DecoderWithAttention(nn.Module):
                 torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             preds = self.fc1(self.dropout(h))  # (batch_size_t, vocab_size)
-            if self.proof_of_concept:
-                for bi in range(batch_size_t):
-                    predictions[bi, t, 0, encoded_captions[bi, t + 1, 0]] = 1
+
+            if self.training:
+                if self.proof_of_concept:
+                    for bi in range(batch_size_t):
+                        predictions[bi, t, 0, captions[bi, t + 1, 0]] = 1
+                else:
+                    predictions[:batch_size_t, t, 0] = preds
             else:
-                predictions[:batch_size_t, t, 0] = preds
+                if self.proof_of_concept:
+                    for bi in range(batch_size_t):
+                        predictions[bi, t, captions[bi, t + 1]] = 1
+                else:
+                    predictions[:batch_size_t, t] = preds
 
             if self.fc2 is not None:
                 ph = self.fc2(self.dropout(h))
@@ -345,19 +377,23 @@ class DecoderWithAttention(nn.Module):
             if self.training:
                 preds_tokens, sort_tokens = self.token_decoder(
                     ph, 
-                    encoded_captions[:batch_size_t, t + 1, :], 
+                    captions[:batch_size_t, t + 1, :], 
                     caption_lt_lengths[:batch_size_t, t + 1])
                 predictions[sort_tokens, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
             else:
-                generator = self.generator(max_seq_len=encoded_captions.size(2) - 1)
-                _, preds_tokens = generator.search(
+                generator = self.generator(max_seq_len=self.max_len_lt - 1)
+                _, out_scores, out_length = generator.search(
                     self.token_decoder, ph, 
                     init_input=torch.argmax(predictions[:batch_size_t, t, 0], dim=-1))
-                predictions[:batch_size_t, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
+                for bi in range(batch_size_t):
+                    predictions[bi, t, :] = out_scores[bi, out_length[bi] - 2, :]
+
             # print(predictions.shape, preds.shape)
             alphas[:batch_size_t, t, :] = alpha
 
-        return predictions, encoded_captions, caption_lt_lengths, alphas, sort_ind
+        if self.training:
+            return predictions, captions, caption_lt_lengths, alphas, sort_ind
+        return predictions, captions, decode_lengths, alphas, sort_ind
 
     def predict(self, encoder_out, captions, hiddens):
         # Embedding
@@ -381,7 +417,11 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithRnn(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, 
+    def __init__(self, 
+                 resnet, 
+                 vocab_size: int, 
+                 max_len: int,
+                 max_len_lt: int,
                  enable_attention = None, 
                  enable_fc = None, 
                  enable_encoder = None,
@@ -401,12 +441,14 @@ class ImageCaptionWithRnn(nn.Module):
 
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size
+        self.max_len = max_len
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
         self.decoder = DecoderWithAttention(attention_dim=512,
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
+                                            max_len_lt=max_len_lt,
                                             dropout=0.5,
                                             proof_of_concept=self.proof_of_concept,
                                             enable_attention=self.enable_attention,
@@ -419,48 +461,60 @@ class ImageCaptionWithRnn(nn.Module):
         imgs = batch["image"]
         caps = batch["code"].long()
         caplens = batch["code_len"]
-        capltlens = batch["code_lt_len"]
+
+        if self.training:
+            capltlens = batch["code_lt_len"]
+        else:
+            capltlens = None
 
         batch_size = caps.size(0)
         seq_len = caps.size(1)
-        seq_lt_len = caps.size(2)
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens, capltlens)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
+            imgs, caps, caplens, capltlens)
 
-        targets = caps_sorted[:, 1:, :]
+        targets = caps_sorted[:, 1:]
 
         # print(scores.shape)  # (batch_size, <seq_len, <seq_lt_len, vocab_size)
         # print(targets.shape)  # (batch_size, seq_len-1, seq_lt_len)
         # print(decode_lengths.shape)  # (batch_size, seq_len)
 
-        xx, yy = [], []
-        for bi in range(batch_size):
-            for si in range(seq_len - 1):
-                dl = decode_lengths[bi, si + 1]
-                if dl == 0:
-                    continue
-                if self.training:
-                    # print(bi, si, dl)
-                    for di in range(dl):
-                        xx.append(scores[bi, si, di, :])
-                        yy.append(targets[bi, si, di])
-                        # assert xx[-1].argmax(dim=-1) == yy[-1]
-                else:
-                    assert dl >= 2, dl
-                    for di in range(dl - 1):
-                        pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
-                        if pp == 4 or pp == 0:  # <end> or <pad>
-                            # print(f"found @ {di}")
-                            break
-                    xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, dl - 2])
-                    # xx.append(scores[bi, si, 0, :])
-                    # yy.append(targets[bi, si, 0])
+        if self.training:
+            xx, yy = [], []
+            for bi in range(batch_size):
+                for si in range(seq_len - 1):
+                    if self.training:
+                        dl = decode_lengths[bi, si + 1]
+                        if dl == 0:
+                            continue
+                        # print(bi, si, dl)
+                        for di in range(dl):
+                            xx.append(scores[bi, si, di, :])
+                            yy.append(targets[bi, si, di])
+                            # assert xx[-1].argmax(dim=-1) == yy[-1]
+            scores = torch.stack(xx)
+            targets = torch.stack(yy)
+        else:
+            scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+            targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
-        scores = torch.stack(xx)
-        targets = torch.stack(yy)
+            # dl = decode_lengths[bi]
+            # if dl == 0:
+            #     continue
+            # # assert dl >= 2, dl
+            # # for di in range(dl - 1):
+            # #     pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
+            # #     if pp == 4 or pp == 0:  # <end> or <pad>
+            # #         # print(f"found @ {di}")
+            # #         break
+            # xx.append(scores[bi, si])
+            # yy.append(targets[bi, si])
+            # # xx.append(scores[bi, si, 0, :])
+            # # yy.append(targets[bi, si, 0])
+
+        
         # print(scores.shape, targets.shape)
 
 
