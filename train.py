@@ -54,6 +54,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--code-path", type=str)
     parser.add_argument("--code-lt-path", type=str)
     parser.add_argument("--test-path", type=str)
+    parser.add_argument("--label-aug-prob", type=float)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -216,7 +217,7 @@ def main(args):
     has_comma = (not args.no_comma)
     
     train_set = ImageCodeDataset(args.image_path, args.code_path, split_train, transform=PresetEval(),
-                                 label_trans=code_lt, multi_label=multi_label,
+                                 label_trans=code_lt, multi_label=multi_label, label_aug_prob=args.label_aug_prob,
                                  has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")

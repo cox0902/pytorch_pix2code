@@ -93,6 +93,7 @@ class TokenDecoder(nn.Module):
                  enable_attention=False,
                  enable_encoder=False,
                  tf_token_decoder=1.0,
+                 disable_cat=False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
@@ -100,6 +101,7 @@ class TokenDecoder(nn.Module):
         self.proof_of_concept = proof_of_concept
         self.enable_attention = enable_attention
         self.tf_token_decoder = tf_token_decoder
+        self.disable_cat = disable_cat
 
         if self.enable_attention:
             self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
@@ -114,7 +116,10 @@ class TokenDecoder(nn.Module):
         else:
             self.encode_step = None
 
-        self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        if self.disable_cat:
+            self.decode_step = nn.LSTMCell(embed_dim, decoder_dim, bias=True)  # decoding LSTMCell
+        else:
+            self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
         self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
         self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
@@ -171,9 +176,14 @@ class TokenDecoder(nn.Module):
             else:
                 tf_embeddings = ta_embeddings
 
-            h, c = self.decode_step(
-                torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                (h[:batch_size_t], c[:batch_size_t]))
+            if self.disable_cat:
+                h, c = self.decode_step(
+                    embeddings[:batch_size_t, t, :],
+                    (h[:batch_size_t], c[:batch_size_t]))
+            else:
+                h, c = self.decode_step(
+                    torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
+                    (h[:batch_size_t], c[:batch_size_t]))
             
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
             if self.proof_of_concept:
@@ -245,7 +255,8 @@ class DecoderWithAttention(nn.Module):
                  generator = None,
                  tf_decoder = 1.0,
                  tf_token_decoder = 1.0,
-                 ignore_control_tokens = False
+                 ignore_control_tokens = False,
+                 disable_cat = False
     ):
         """
         :param attention_dim: size of attention network
@@ -289,7 +300,8 @@ class DecoderWithAttention(nn.Module):
                                           proof_of_concept=self.proof_of_concept, 
                                           enable_attention=enable_attention,
                                           enable_encoder=enable_encoder,
-                                          tf_token_decoder=tf_token_decoder)
+                                          tf_token_decoder=tf_token_decoder,
+                                          disable_cat=disable_cat)
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -429,9 +441,22 @@ class DecoderWithAttention(nn.Module):
                 # print(preds_captions.shape, batch_size_t)
 
             if self.training:
-                indices = torch.where(captions[:batch_size_t, t + 1, 0] != 4)[0]
+                if self.ignore_control_tokens:
+                    indices = torch.where(captions[:batch_size_t, t + 1, 0] > 7)[0]
+
+                    ct_indices = torch.where(torch.logical_and(
+                        captions[:batch_size_t, t + 1, 0] <= 7,
+                        captions[:batch_size_t, t + 1, 0] != 4
+                    ))[0]
+                    for ci in ct_indices:
+                        predictions[ci, t, 1, 4] = 1  # <end>
+                else:
+                    indices = torch.where(captions[:batch_size_t, t + 1, 0] != 4)[0]
             else:
-                indices = torch.where(preds_captions != 4)[0]
+                if self.ignore_control_tokens:
+                    indices = torch.where(preds_captions > 7)[0]
+                else:
+                    indices = torch.where(preds_captions != 4)[0]
             if indices.size(0) == 0:
                 continue
 
@@ -497,9 +522,11 @@ class ImageCaptionWithRnn(nn.Module):
                  enable_attention = None, 
                  enable_fc = None, 
                  enable_encoder = None,
+                 disable_cat = None,
                  tf_decoder = None,
                  tf_token_decoder = None,
-                 generator=None):
+                 generator=None,
+                 ignore_control_tokens = None):
         super().__init__()
 
         self.enable_attention = (enable_attention == "1")
@@ -507,6 +534,8 @@ class ImageCaptionWithRnn(nn.Module):
         self.enable_encoder = (enable_encoder == '1')
         self.tf_decoder = (float(tf_decoder) if tf_decoder is not None else 1.0)
         self.tf_token_decoder = (float(tf_token_decoder) if tf_token_decoder is not None else 1.0)
+        self.ignore_control_tokens = (ignore_control_tokens == '1')
+        self.disable_cat = (disable_cat == '1')
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "enable_attention": self.enable_attention,
@@ -514,6 +543,8 @@ class ImageCaptionWithRnn(nn.Module):
                 "enable_encoder": self.enable_encoder,
                 "tf_decoder": self.tf_decoder,
                 "tf_token_decoder": self.tf_token_decoder,
+                "ignore_control_tokens": self.ignore_control_tokens,
+                "disable_cat": self.disable_cat
             }.items()
         ])))
 
@@ -534,7 +565,9 @@ class ImageCaptionWithRnn(nn.Module):
                                             enable_encoder=self.enable_encoder,
                                             generator=generator,
                                             tf_decoder=self.tf_decoder,
-                                            tf_token_decoder=self.tf_token_decoder)
+                                            tf_token_decoder=self.tf_token_decoder,
+                                            ignore_control_tokens=self.ignore_control_tokens,
+                                            disable_cat=self.disable_cat)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
