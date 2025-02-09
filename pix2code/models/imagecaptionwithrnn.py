@@ -110,6 +110,8 @@ class TokenDecoder(nn.Module):
 
         if enable_encoder:
             self.encode_step = nn.LSTMCell(encoder_dim, encoder_dim, bias=True)
+        else:
+            self.encode_step = None
 
         self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
@@ -135,6 +137,11 @@ class TokenDecoder(nn.Module):
         target_lengths = target_lengths[sort_ind]
         encoder_out = encoder_out[sort_ind]
 
+        if self.encode_step is not None:
+            hiddens = None
+            for t in range(encoder_out.size(1)):
+                hiddens = self.encode_step(encoder_out[:, t, :], hiddens)
+            encoder_out = hiddens[0]
 
         h, c = self.init_hidden_state(encoder_out)
 
@@ -168,6 +175,13 @@ class TokenDecoder(nn.Module):
         return predictions, sort_ind
 
     def predict_init(self, encoder_out):
+
+        if self.encode_step is not None:
+            hiddens = None
+            for t in range(encoder_out.size(1)):
+                hiddens = self.encode_step(encoder_out[:, t, :], hiddens)
+            encoder_out = hiddens[0]
+
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
         
         return {
@@ -180,8 +194,15 @@ class TokenDecoder(nn.Module):
         
         embeddings = self.embedding(inputs[:, -1])
 
+        if self.enable_attention:
+            attention_weighted_encoding, alpha = self.attention(contexts["encoder_out"], contexts["h"])
+            gate = self.sigmoid(self.f_beta(contexts["h"]))  # gating scalar, (batch_size_t, encoder_dim)
+            attention_weighted_encoding = gate * attention_weighted_encoding
+        else:
+            attention_weighted_encoding = contexts["encoder_out"]
+
         # with torch.no_grad() should be called outside this scope.
-        h, c = self.decode_step(torch.cat([embeddings, contexts["encoder_out"]], dim=1), 
+        h, c = self.decode_step(torch.cat([embeddings, attention_weighted_encoding], dim=1), 
                                 (contexts["h"], contexts["c"]))
 
         scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
@@ -321,7 +342,8 @@ class DecoderWithAttention(nn.Module):
 
         # Embedding
         if self.training:
-            embeddings = self.embedding(captions[:, :, 0])  # (batch_size, max_caption_length, embed_dim)
+            embeddings = self.embedding(captions[:, :, 0])  
+            # (batch_size, max_caption_length, max_caption_lt_length, embed_dim)
         else:
             embeddings = self.embedding(captions)  # (batch_size, max_caption_length, embed_dim)
         # print(embeddings.shape)
@@ -342,6 +364,9 @@ class DecoderWithAttention(nn.Module):
             predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
         
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
+
+        if self.enable_encoder:
+            memory = None
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -373,6 +398,13 @@ class DecoderWithAttention(nn.Module):
                 ph = self.fc2(self.dropout(h))
             else:
                 ph = h
+
+            if self.enable_encoder:
+                if memory is None:
+                    memory = ph[:, None, :]
+                else:
+                    memory = torch.cat([memory[:batch_size_t, :, :], ph[:, None, :]], dim=1)
+                ph = memory
 
             if self.training:
                 preds_tokens, sort_tokens = self.token_decoder(
@@ -459,12 +491,13 @@ class ImageCaptionWithRnn(nn.Module):
         
     def forward(self, batch):
         imgs = batch["image"]
-        caps = batch["code"].long()
         caplens = batch["code_len"]
 
         if self.training:
+            caps = batch["code_train"].long()
             capltlens = batch["code_lt_len"]
         else:
+            caps = batch["code_valid"].long()
             capltlens = None
 
         batch_size = caps.size(0)
@@ -475,7 +508,11 @@ class ImageCaptionWithRnn(nn.Module):
         scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
             imgs, caps, caplens, capltlens)
 
-        targets = caps_sorted[:, 1:]
+        if self.training:
+            targets = caps_sorted[:, 1:]
+        else:
+            targets = batch["code"].long()
+            targets = targets[sort_ind, 1:]
 
         # print(scores.shape)  # (batch_size, <seq_len, <seq_lt_len, vocab_size)
         # print(targets.shape)  # (batch_size, seq_len-1, seq_lt_len)

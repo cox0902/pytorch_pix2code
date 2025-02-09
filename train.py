@@ -225,7 +225,7 @@ def main(args):
         
     if split_valid is not None:
         valid_set = ImageCodeDataset(args.image_path, args.code_path, split_valid, transform=PresetEval(),
-                                     label_trans=code_lt,
+                                     label_trans=code_lt, multi_label=multi_label,
                                      has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
@@ -289,7 +289,7 @@ def main(args):
     if split_test is not None:
         print("=" * 100)
         test_set = ImageCodeDataset(args.image_path, args.test_path, split_test, transform=PresetEval(),
-                                    label_trans=code_lt,
+                                    label_trans=code_lt, multi_label=multi_label,
                                     has_comma=has_comma, has_rect=has_rect, mask_rect=mask_rect)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")

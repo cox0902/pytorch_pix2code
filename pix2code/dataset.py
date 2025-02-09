@@ -118,14 +118,17 @@ class ImageCodeDataset(Dataset):
                         item["code"][i] = np.random.choice(self.label_trans[item["code"][i]])
 
             if self.multi_label:
-                new_code = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+                new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+                new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
                 new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
                 for i in range(item["code_len"]):
                     lts = self.label_trans[code[i]][::-1]
-                    new_code[i, :len(lts)] = lts
-                    new_code[i, len(lts)] = 4  # <eos>
+                    new_code_train[i, :len(lts)] = lts
+                    new_code_train[i, len(lts)] = 4  # <eos>
+                    new_code_valid[i] = new_code_train[i, 0] 
                     new_code_lt_len[i] = len(lts) + 1
-                item["code"] = new_code
+                item["code_train"] = new_code_train
+                item["code_valid"] = new_code_valid
                 item["code_lt_len"] = new_code_lt_len 
 
         if self.has_rect:
