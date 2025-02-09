@@ -198,6 +198,7 @@ class DecoderWithAttention(nn.Module):
                  proof_of_concept: bool = False, 
                  enable_attention = False, 
                  enable_fc = False,
+                 enable_encoder = False,
                  generator = None):
         """
         :param attention_dim: size of attention network
@@ -408,8 +409,9 @@ class ImageCaptionWithRnn(nn.Module):
                                             vocab_size=vocab_size,
                                             dropout=0.5,
                                             proof_of_concept=self.proof_of_concept,
-                                            enable_attention=enable_attention,
-                                            enable_fc=enable_fc,
+                                            enable_attention=self.enable_attention,
+                                            enable_fc=self.enable_fc,
+                                            enable_encoder=self.enable_encoder,
                                             generator=generator)
         self.criterion = nn.CrossEntropyLoss()
         
