@@ -238,7 +238,6 @@ class Trainer:
         metrics.reset(len(data_loader))
 
         # total_loss = 0
-
         print()
         for i, batch in enumerate(data_loader):
             batch = self.to_device(batch)
@@ -347,6 +346,7 @@ class Trainer:
 
         print()
         with torch.no_grad():
+
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
                 # targets = batch["target"]
@@ -528,6 +528,19 @@ class Trainer:
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
 
             if valid_loader is not None:
+                # self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
+                # self.test(data_loader=valid_loader, metrics=eval_metrics, proof_of_concept=proof_of_concept)
+                
+                if proof_of_concept:
+                    recent_score, _ = self.valid(data_loader=valid_loader, metrics=eval_metrics, proof_of_concept=proof_of_concept)
+                    recent_score, _ = self.valid(data_loader=valid_loader, metrics=eval_metrics, proof_of_concept=proof_of_concept)
+
+                # for _ in train_loader:
+                #     break
+
+                # for _ in valid_loader:
+                #     break
+
                 recent_score, _ = self.valid(data_loader=valid_loader, metrics=eval_metrics, proof_of_concept=proof_of_concept)
                 
                 if epoch >= self.warmup_epochs or proof_of_concept:

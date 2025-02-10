@@ -91,7 +91,7 @@ class TokenDecoder(nn.Module):
     def __init__(self, embed_dim, encoder_dim, decoder_dim, attention_dim, vocab_size, 
                  dropout=0.2, proof_of_concept=False, 
                  enable_attention=False,
-                 enable_encoder=False,
+                 enable_encoder=None,
                  tf_token_decoder=1.0,
                  disable_cat=False,
                  *args, **kwargs):
@@ -111,7 +111,7 @@ class TokenDecoder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
 
-        if enable_encoder:
+        if enable_encoder is not None:
             self.encode_step = nn.LSTMCell(encoder_dim, encoder_dim, bias=True)
         else:
             self.encode_step = None
@@ -177,9 +177,8 @@ class TokenDecoder(nn.Module):
                 tf_embeddings = ta_embeddings
 
             if self.disable_cat:
-                h, c = self.decode_step(
-                    embeddings[:batch_size_t, t, :],
-                    (h[:batch_size_t], c[:batch_size_t]))
+                h, c = self.decode_step(embeddings[:batch_size_t, t, :], 
+                                        (h[:batch_size_t], c[:batch_size_t]))
             else:
                 h, c = self.decode_step(
                     torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
@@ -214,16 +213,19 @@ class TokenDecoder(nn.Module):
         
         embeddings = self.embedding(inputs[:, -1])
 
-        if self.enable_attention:
-            attention_weighted_encoding, _ = self.attention(contexts["encoder_out"], contexts["h"])
-            gate = self.sigmoid(self.f_beta(contexts["h"]))  # gating scalar, (batch_size_t, encoder_dim)
-            attention_weighted_encoding = gate * attention_weighted_encoding
+        if self.disable_cat:
+            h, c = self.decode_step(embeddings, (contexts["h"], contexts["c"]))
         else:
-            attention_weighted_encoding = contexts["encoder_out"]
+            if self.enable_attention:
+                attention_weighted_encoding, _ = self.attention(contexts["encoder_out"], contexts["h"])
+                gate = self.sigmoid(self.f_beta(contexts["h"]))  # gating scalar, (batch_size_t, encoder_dim)
+                attention_weighted_encoding = gate * attention_weighted_encoding
+            else:
+                attention_weighted_encoding = contexts["encoder_out"]
 
-        # with torch.no_grad() should be called outside this scope.
-        h, c = self.decode_step(torch.cat([embeddings, attention_weighted_encoding], dim=1), 
-                                (contexts["h"], contexts["c"]))
+            # with torch.no_grad() should be called outside this scope.
+            h, c = self.decode_step(torch.cat([embeddings, attention_weighted_encoding], dim=1), 
+                                    (contexts["h"], contexts["c"]))
 
         scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
 
@@ -251,7 +253,7 @@ class DecoderWithAttention(nn.Module):
                  proof_of_concept: bool = False, 
                  enable_attention = False, 
                  enable_fc = False,
-                 enable_encoder = False,
+                 enable_encoder = None,
                  generator = None,
                  tf_decoder = 1.0,
                  tf_token_decoder = 1.0,
@@ -344,7 +346,7 @@ class DecoderWithAttention(nn.Module):
         c = self.init_c(mean_encoder_out)
         return h, c
 
-    def forward(self, encoder_out, captions, caption_lengths, caption_lt_lengths):
+    def forward(self, encoder_out, captions, caption_lengths, caption_lt_lengths, captions_target):
         """
         Forward propagation.
 
@@ -366,6 +368,7 @@ class DecoderWithAttention(nn.Module):
         caption_lengths, sort_ind = caption_lengths.sort(dim=0, descending=True)
         encoder_out = encoder_out[sort_ind]
         captions = captions[sort_ind]
+        captions_target = captions_target[sort_ind]
         if self.training:
             caption_lt_lengths = caption_lt_lengths[sort_ind]
 
@@ -394,8 +397,8 @@ class DecoderWithAttention(nn.Module):
         
         alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
 
-        if self.enable_encoder:
-            memory = None
+        if self.enable_encoder is not None:
+            memory = []
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -410,7 +413,8 @@ class DecoderWithAttention(nn.Module):
             alphas[:batch_size_t, t, :] = alpha
 
             if self.training and t != 0:
-                tf_preds = torch.argmax(predictions[:batch_size_t, t - 1, 0, :], dim=-1)
+                tf_preds = torch.argmax(torch.nn.functional.softmax(
+                    predictions[:batch_size_t, t - 1, 0, :], dim=-1), dim=-1)
                 tf_embeddings = self.embedding(tf_preds)
                 ta_embeddings = embeddings[:batch_size_t, t, :]
                 tf_mask = (torch.rand(batch_size_t) < self.tf_decoder)
@@ -436,8 +440,8 @@ class DecoderWithAttention(nn.Module):
                 else:
                     predictions[:batch_size_t, t, :] = preds
                 
-                preds_captions = torch.argmax(
-                    torch.nn.functional.softmax(predictions[:batch_size_t, t, :], dim=-1), dim=-1)
+                preds_captions = torch.argmax(torch.nn.functional.softmax(
+                    predictions[:batch_size_t, t, :], dim=-1), dim=-1)
                 # print(preds_captions.shape, batch_size_t)
 
             if self.training:
@@ -461,20 +465,21 @@ class DecoderWithAttention(nn.Module):
                 continue
 
             if self.fc2 is not None:
-                ph = self.fc2(self.dropout(h[indices, :]))
+                ph = self.fc2(self.dropout(h))
             else:
-                ph = h[indices, :]
+                ph = h
 
-            if self.enable_encoder:
-                if memory is None:
-                    memory = ph[:, None, :]
-                else:
-                    memory = torch.cat([memory[indices, :, :], ph[:, None, :]], dim=1)
-                ph = memory
+            if self.enable_encoder is not None:
+                if len(memory) > self.enable_encoder - 1 and len(memory) != 0:
+                    memory.pop()
+                for i in range(len(memory)):
+                    memory[i] = memory[i][:batch_size_t, :, :]
+                memory.append(ph[:, None, :])
+                ph = torch.cat(memory, dim=1)
 
             if self.training:
                 preds_tokens = self.token_decoder(
-                    ph, 
+                    ph[indices], 
                     captions[indices, t + 1, :], 
                     caption_lt_lengths[indices, t + 1])
                 predictions[indices, t, 1:1 + preds_tokens.size(1), :] = preds_tokens
@@ -484,6 +489,9 @@ class DecoderWithAttention(nn.Module):
                     _, out_scores, out_length = generator.search(
                         self.token_decoder, ph[bi][None], 
                         init_input=preds_captions[bi])
+                    if self.proof_of_concept:
+                        out_scores = torch.zeros_like(out_scores)
+                        out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = 1
                     predictions[bi, t, :] = out_scores[0, out_length[0] - 2, :]
 
             # print(predictions.shape, preds.shape)
@@ -514,24 +522,27 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithRnn(nn.Module):
 
-    def __init__(self, 
-                 resnet, 
-                 vocab_size: int, 
-                 max_len: int,
-                 max_len_lt: int,
-                 enable_attention = None, 
-                 enable_fc = None, 
-                 enable_encoder = None,
-                 disable_cat = None,
-                 tf_decoder = None,
-                 tf_token_decoder = None,
-                 generator=None,
-                 ignore_control_tokens = None):
+    def __init__(
+            self, 
+            resnet, 
+            vocab_size: int, 
+            max_len: int,
+            max_len_lt: int,
+            enable_attention = None, 
+            enable_fc = None, 
+            enable_encoder = None,
+            disable_cat = None,
+            tf_decoder = None,
+            tf_token_decoder = None,
+            generator=None,
+            ignore_control_tokens = None,
+            proof_of_concept: bool = False
+    ):
         super().__init__()
 
         self.enable_attention = (enable_attention == "1")
         self.enable_fc = (enable_fc == '1')
-        self.enable_encoder = (enable_encoder == '1')
+        self.enable_encoder = (int(enable_encoder) if enable_encoder is not None else None)
         self.tf_decoder = (float(tf_decoder) if tf_decoder is not None else 1.0)
         self.tf_token_decoder = (float(tf_token_decoder) if tf_token_decoder is not None else 1.0)
         self.ignore_control_tokens = (ignore_control_tokens == '1')
@@ -548,7 +559,7 @@ class ImageCaptionWithRnn(nn.Module):
             }.items()
         ])))
 
-        self.proof_of_concept: bool = False
+        self.proof_of_concept = proof_of_concept
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.alpha_c = 1.
@@ -571,15 +582,24 @@ class ImageCaptionWithRnn(nn.Module):
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
+
+        if self.proof_of_concept:
+            print("### proof_of_concept ###")
+
         imgs = batch["image"]
         caplens = batch["code_len"]
 
         if self.training:
             caps = batch["code_train"].long()
             capltlens = batch["code_lt_len"]
+            caps_tgt = caps
         else:
             caps = batch["code_valid"].long()
             capltlens = None
+            caps_tgt = batch["code"].long()
+
+            # print(caps[caps != 0])
+            # print(caps_tgt[caps_tgt != 0])
 
         batch_size = caps.size(0)
         seq_len = caps.size(1)
@@ -587,7 +607,7 @@ class ImageCaptionWithRnn(nn.Module):
         # Forward prop.
         imgs = self.encoder(imgs)
         scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
-            imgs, caps, caplens, capltlens)
+            imgs, caps, caplens, capltlens, caps_tgt)
 
         if self.training:
             targets = caps_sorted[:, 1:]
@@ -619,6 +639,9 @@ class ImageCaptionWithRnn(nn.Module):
             scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
             targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
+            if self.proof_of_concept:
+                print(torch.argmax(scores, dim=-1))
+                print(targets)
             # dl = decode_lengths[bi]
             # if dl == 0:
             #     continue

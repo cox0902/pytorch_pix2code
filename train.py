@@ -159,6 +159,9 @@ def build_model(args, data_set):
     model_name, model_params = parse_model(args.model)
     assert model_name is not None
 
+    if args.proof_of_concept:
+        model_params["proof_of_concept"] = True
+
     model_resnet = args.model_resnet
     if model_resnet is not None:
         model_params["resnet"] = build_resnet_model(model_resnet)
