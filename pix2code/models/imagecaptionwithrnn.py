@@ -546,6 +546,7 @@ class ImageCaptionWithRnn(nn.Module):
             generator=None,
             ignore_control_tokens = None,
             ignore_easy_sample = None,
+            ignore_hard_sample = None,
             proof_of_concept: bool = False
     ):
         super().__init__()
@@ -559,6 +560,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.ignore_control_tokens = (ignore_control_tokens == '1')
         self.disable_cat = (disable_cat == '1')
         self.ignore_easy_sample = (float(ignore_easy_sample) if ignore_easy_sample is not None else None)
+        self.ignore_hard_sample = (float(ignore_hard_sample) if ignore_hard_sample is not None else None)
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "enable_attention": self.enable_attention,
@@ -570,6 +572,7 @@ class ImageCaptionWithRnn(nn.Module):
                 "ignore_control_tokens": self.ignore_control_tokens,
                 "disable_cat": self.disable_cat,
                 "ignore_easy_sample": self.ignore_easy_sample,
+                "ignore_hard_sample": self.ignore_hard_sample,
             }.items()
         ])))
 
@@ -650,6 +653,10 @@ class ImageCaptionWithRnn(nn.Module):
                             if self.ignore_easy_sample is not None:
                                 sm = torch.nn.functional.softmax(ss, dim=-1)
                                 if sm[tt] > self.ignore_easy_sample:
+                                    continue
+                            if self.ignore_hard_sample is not None:
+                                sm = torch.nn.functional.softmax(ss, dim=-1)
+                                if sm[tt] < self.ignore_hard_sample:
                                     continue
 
                             xx.append(ss)
