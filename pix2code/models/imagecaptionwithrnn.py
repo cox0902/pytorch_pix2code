@@ -254,6 +254,7 @@ class DecoderWithAttention(nn.Module):
                  enable_attention = False, 
                  enable_fc = False,
                  enable_encoder = None,
+                 enable_memory = None,
                  generator = None,
                  tf_decoder = 1.0,
                  tf_token_decoder = 1.0,
@@ -280,6 +281,7 @@ class DecoderWithAttention(nn.Module):
         self.proof_of_concept = proof_of_concept
         self.generator = generator
         self.enable_encoder = enable_encoder
+        self.enable_memory = enable_memory
         self.tf_decoder = tf_decoder
         self.ignore_control_tokens = ignore_control_tokens
 
@@ -399,6 +401,8 @@ class DecoderWithAttention(nn.Module):
 
         if self.enable_encoder is not None:
             memory = []
+        elif self.enable_memory is not None:
+            memory = None
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -476,6 +480,10 @@ class DecoderWithAttention(nn.Module):
                     memory[i] = memory[i][:batch_size_t, :, :]
                 memory.append(ph[:, None, :])
                 ph = torch.cat(memory, dim=1)
+            elif self.enable_memory is not None:
+                if memory is not None:
+                    ph = memory[:batch_size_t, :] * self.enable_memory + (1 - self.enable_memory) * ph
+                memory = ph 
 
             if self.training:
                 preds_tokens = self.token_decoder(
@@ -531,6 +539,7 @@ class ImageCaptionWithRnn(nn.Module):
             enable_attention = None, 
             enable_fc = None, 
             enable_encoder = None,
+            enable_memory = None,
             disable_cat = None,
             tf_decoder = None,
             tf_token_decoder = None,
@@ -544,6 +553,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.enable_attention = (enable_attention == "1")
         self.enable_fc = (enable_fc == '1')
         self.enable_encoder = (int(enable_encoder) if enable_encoder is not None else None)
+        self.enable_memory = (float(enable_memory) if enable_memory is not None else None)
         self.tf_decoder = (float(tf_decoder) if tf_decoder is not None else 1.0)
         self.tf_token_decoder = (float(tf_token_decoder) if tf_token_decoder is not None else 1.0)
         self.ignore_control_tokens = (ignore_control_tokens == '1')
@@ -554,6 +564,7 @@ class ImageCaptionWithRnn(nn.Module):
                 "enable_attention": self.enable_attention,
                 "enable_fc": self.enable_fc,
                 "enable_encoder": self.enable_encoder,
+                "enable_memory": self.enable_memory,
                 "tf_decoder": self.tf_decoder,
                 "tf_token_decoder": self.tf_token_decoder,
                 "ignore_control_tokens": self.ignore_control_tokens,
@@ -577,6 +588,7 @@ class ImageCaptionWithRnn(nn.Module):
                                             enable_attention=self.enable_attention,
                                             enable_fc=self.enable_fc,
                                             enable_encoder=self.enable_encoder,
+                                            enable_memory=self.enable_memory,
                                             generator=generator,
                                             tf_decoder=self.tf_decoder,
                                             tf_token_decoder=self.tf_token_decoder,
