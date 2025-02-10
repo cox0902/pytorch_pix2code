@@ -191,8 +191,18 @@ class DecoderWithAttention(nn.Module):
     Decoder.
     """
 
-    def __init__(self, attention_dim, embed_dim, decoder_dim, vocab_size, encoder_dim=2048, dropout=0.5,
-                 proof_of_concept: bool = False, enable_attention = False, generator = None):
+    def __init__(
+            self, 
+            attention_dim, 
+            embed_dim, 
+            decoder_dim, 
+            vocab_size, 
+            encoder_dim=2048, 
+            dropout=0.5,
+            proof_of_concept: bool = False, 
+            enable_attention = False, 
+            generator = None
+    ):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -300,6 +310,7 @@ class DecoderWithAttention(nn.Module):
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
         decode_lt_lengths = caption_lt_lengths.flatten().tolist()
+        print(max(decode_lt_lengths))
 
         # Create tensors to hold word predicion scores and alphas
         predictions = torch.zeros(batch_size, max(decode_lengths), max(decode_lt_lengths), vocab_size).to(encoder_out.device)
@@ -372,13 +383,22 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithTnn(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, enable_attention = None, generator=None):
+    def __init__(
+            self, 
+            resnet, 
+            vocab_size: int, 
+            max_len: int,
+            max_len_lt: int,
+            enable_attention = None, 
+            generator=None,
+            proof_of_concept: bool = False
+    ):
         super().__init__()
         print(f"[params] enable_attention={enable_attention == '1'}")
 
         self.enable_attention = (enable_attention == "1")
 
-        self.proof_of_concept: bool = False
+        self.proof_of_concept = proof_of_concept
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
@@ -394,17 +414,24 @@ class ImageCaptionWithTnn(nn.Module):
         
     def forward(self, batch):
         imgs = batch["image"]
-        caps = batch["code"].long()
         caplens = batch["code_len"]
-        capltlens = batch["code_lt_len"]
+
+        if self.training:
+            caps = batch["code_train"].long()
+            capltlens = batch["code_lt_len"]
+            caps_tgt = caps
+        else:
+            caps = batch["code_valid"].long()
+            capltlens = None
+            caps_tgt = batch["code"].long()
 
         batch_size = caps.size(0)
         seq_len = caps.size(1)
-        seq_lt_len = caps.size(2)
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(imgs, caps, caplens, capltlens)
+        scores, caps_sorted, decode_lengths, alphas, sort_ind = self.decoder(
+            imgs, caps, caplens, capltlens)
 
         targets = caps_sorted[:, 1:, :]
 
@@ -412,32 +439,29 @@ class ImageCaptionWithTnn(nn.Module):
         # print(targets.shape)  # (batch_size, seq_len-1, seq_lt_len)
         # print(decode_lengths.shape)  # (batch_size, seq_len)
 
-        xx, yy = [], []
-        for bi in range(batch_size):
-            for si in range(seq_len - 1):
-                dl = decode_lengths[bi, si + 1]
-                if dl == 0:
-                    continue
-                if self.training:
-                    # print(bi, si, dl)
-                    for di in range(dl):
-                        xx.append(scores[bi, si, di, :])
-                        yy.append(targets[bi, si, di])
-                        # assert xx[-1].argmax(dim=-1) == yy[-1]
-                else:
-                    assert dl >= 2, dl
-                    for di in range(dl - 1):
-                        pp = torch.argmax(scores[bi, si, di + 1, :], dim=-1)
-                        if pp == 4 or pp == 0:  # <end> or <pad>
-                            # print(f"found @ {di}")
-                            break
-                    xx.append(scores[bi, si, di, :])
-                    yy.append(targets[bi, si, dl - 2])
-                    # xx.append(scores[bi, si, 0, :])
-                    # yy.append(targets[bi, si, 0])
+        if self.training:
+            xx, yy = [], []
+            for bi in range(batch_size):
+                for si in range(seq_len - 1):
+                    if self.training:
+                        dl = decode_lengths[bi, si + 1]
+                        if dl == 0:
+                            continue
+                        # print(bi, si, dl)
+                        for di in range(dl):
+                            xx.append(scores[bi, si, di, :])
+                            yy.append(targets[bi, si, di])
+                            # assert xx[-1].argmax(dim=-1) == yy[-1]
+                        # print(torch.argmax(xx[-1], dim=-1), yy[-1])
+            scores = torch.stack(xx)
+            targets = torch.stack(yy)
+        else:
+            scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+            targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
-        scores = torch.stack(xx)
-        targets = torch.stack(yy)
+            if self.proof_of_concept:
+                print(torch.argmax(scores, dim=-1))
+                print(targets)
         # print(scores.shape, targets.shape)
 
 

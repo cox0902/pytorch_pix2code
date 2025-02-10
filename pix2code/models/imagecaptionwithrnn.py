@@ -536,6 +536,7 @@ class ImageCaptionWithRnn(nn.Module):
             tf_token_decoder = None,
             generator=None,
             ignore_control_tokens = None,
+            ignore_easy_sample = None,
             proof_of_concept: bool = False
     ):
         super().__init__()
@@ -547,6 +548,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.tf_token_decoder = (float(tf_token_decoder) if tf_token_decoder is not None else 1.0)
         self.ignore_control_tokens = (ignore_control_tokens == '1')
         self.disable_cat = (disable_cat == '1')
+        self.ignore_easy_sample = (float(ignore_easy_sample) if ignore_easy_sample is not None else None)
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "enable_attention": self.enable_attention,
@@ -555,7 +557,8 @@ class ImageCaptionWithRnn(nn.Module):
                 "tf_decoder": self.tf_decoder,
                 "tf_token_decoder": self.tf_token_decoder,
                 "ignore_control_tokens": self.ignore_control_tokens,
-                "disable_cat": self.disable_cat
+                "disable_cat": self.disable_cat,
+                "ignore_easy_sample": self.ignore_easy_sample,
             }.items()
         ])))
 
@@ -629,10 +632,19 @@ class ImageCaptionWithRnn(nn.Module):
                             continue
                         # print(bi, si, dl)
                         for di in range(dl):
-                            xx.append(scores[bi, si, di, :])
-                            yy.append(targets[bi, si, di])
+                            ss = scores[bi, si, di, :]
+                            tt = targets[bi, si, di]
+
+                            if self.ignore_easy_sample is not None:
+                                sm = torch.nn.functional.softmax(ss, dim=-1)
+                                if sm[tt] > self.ignore_easy_sample:
+                                    continue
+
+                            xx.append(ss)
+                            yy.append(tt)
                             # assert xx[-1].argmax(dim=-1) == yy[-1]
                         # print(torch.argmax(xx[-1], dim=-1), yy[-1])
+
             scores = torch.stack(xx)
             targets = torch.stack(yy)
         else:
