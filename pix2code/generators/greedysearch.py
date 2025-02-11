@@ -28,7 +28,8 @@ class GreedySearch:
 
         output_scores = torch.zeros((batch_size, self.max_seq_len, self.vocab_size), dtype=torch.float).to(images.device)
         for bt in range(batch_size):
-            output_scores[bt, 0, inputs[bt, 0]] = 1.
+            output_scores[bt, 0, :] = -16.118
+            output_scores[bt, 0, inputs[bt, 0]] = -8.9e-6
 
         mask = torch.ones((batch_size, ), dtype=torch.bool)
         length = torch.ones((batch_size, ), dtype=torch.int)
@@ -43,6 +44,7 @@ class GreedySearch:
             selected_contexts = { k: v[mask] for k, v in contexts.items() }
 
             outputs, scores, next_contexts = model.predict_next(selected_inputs, selected_contexts)
+            # print(scores.shape)  # (batch_size, 1, vocab_size)
 
             if self.conditions is not None:
                 c = emb(selected_inputs)
@@ -58,9 +60,12 @@ class GreedySearch:
 
             inputs[mask, t] = outputs
             length[mask] = t + 1
-            output_scores[mask, t] = scores
+            output_scores[mask, t, :] = scores
             for k, v in next_contexts.items():
-                contexts[k][mask] = v
+                if k in contexts:
+                    contexts[k][mask] = v
+                else:
+                    contexts[k] = v
 
             indices = torch.where(torch.logical_or(inputs[:, t] == 0, inputs[:, t] == 4))  # <pad> or <end>
             mask[indices] = 0
@@ -69,7 +74,8 @@ class GreedySearch:
         indices = torch.where(torch.logical_and(inputs[:, -2] != 0, inputs[:, -2] != 4))  # <pad> or <end>
         mask[indices] = 1
         inputs[mask, -1] = 4  # <end>   
-        output_scores[mask, -1, 4] = 1.     
+        output_scores[mask, -1, :] = -16.118
+        output_scores[mask, -1, 4] = -8.9e-6
         length[mask] = self.max_seq_len
 
         return inputs, output_scores, length

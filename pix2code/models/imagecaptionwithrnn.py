@@ -2,6 +2,84 @@ import torch
 import torch.nn as nn
 import torchvision
 import transformers
+from functools import partial
+import torch.nn.functional as F
+from torch.nn import Linear, Identity, Module
+
+
+# https://arxiv.org/abs/2410.01201v1
+
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
+# appendix B
+# https://github.com/glassroom/heinsen_sequence
+
+def heinsen_associative_scan_log(log_coeffs, log_values):
+    a_star = log_coeffs.cumsum(dim = 1)
+    log_h0_plus_b_star = (log_values - a_star).logcumsumexp(dim = 1)
+    log_h = a_star + log_h0_plus_b_star
+    return log_h.exp()
+
+# appendix B.3
+
+def g(x):
+    return torch.where(x >= 0, x + 0.5, x.sigmoid())
+
+def log_g(x):
+    return torch.where(x >= 0, (F.relu(x) + 0.5).log(), -F.softplus(-x))
+
+# log-space version of minGRU - B.3.1
+# they enforce the hidden states to be positive
+
+class minGRU(Module):
+    def __init__(self, dim, dim_inner, bias, proj_out = False):
+        super().__init__()
+
+        # dim_inner = int(dim * expansion_factor)
+        # proj_out = default(proj_out, expansion_factor != 1.)
+
+        self.to_hidden_and_gate = Linear(dim, dim_inner * 2, bias = False)
+        self.to_out = Linear(dim_inner, dim, bias = False) if proj_out else Identity()
+
+    def forward(self, x, prev_hidden = None, return_next_prev_hidden = True):
+        seq_len = x.shape[1]
+        hidden, gate = self.to_hidden_and_gate(x).chunk(2, dim = -1)
+
+        if seq_len == 1:
+            # handle sequential
+
+            hidden = g(hidden)
+            gate = gate.sigmoid()
+            out = torch.lerp(prev_hidden, hidden, gate) if exists(prev_hidden) else (hidden * gate)
+        else:
+            # parallel
+
+            log_coeffs = -F.softplus(gate)
+
+            log_z = -F.softplus(-gate)
+            log_tilde_h = log_g(hidden)
+            log_values = log_z + log_tilde_h
+
+            if exists(prev_hidden):
+                log_values = torch.cat((prev_hidden.log(), log_values), dim = 1)
+                log_coeffs = F.pad(log_coeffs, (0, 0, 1, 0))
+
+            out = heinsen_associative_scan_log(log_coeffs, log_values)
+            out = out[:, -seq_len:]
+
+        next_prev_hidden = out[:, -1:]
+
+        out = self.to_out(out)
+
+        if not return_next_prev_hidden:
+            return out
+
+        # return out, next_prev_hidden
+        return next_prev_hidden
 
 
 class Encoder(nn.Module):
@@ -120,6 +198,11 @@ class TokenDecoder(nn.Module):
         elif self.rnn_cell == "GRU":
             cell_class = nn.GRUCell
             self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+        elif self.rnn_cell == "mGRU":
+            cell_class = minGRU
+        elif self.rnn_cell == "miGRU":
+            cell_class = minGRU
+            self.init_h = nn.Linear(encoder_dim, decoder_dim * 2, bias=False)
         else:
             assert False, self.rnn_cell
 
@@ -147,9 +230,14 @@ class TokenDecoder(nn.Module):
             h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
             c = self.init_c(encoder_out)
             return h, c
-        else:
+        elif self.rnn_cell == "GRU":
             h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
             return h
+        elif self.rnn_cell == "miGRU":
+            hidden, gate = self.init_h(encoder_out).chunk(2, dim=-1)
+            return g(hidden) * gate.sigmoid()
+        else:
+            return None
     
     def forward(self, encoder_out, targets, target_lengths):
         
@@ -201,13 +289,23 @@ class TokenDecoder(nn.Module):
 
             if self.rnn_cell == "LSTM":
                 h, c = self.decode_step(rnn_input, (h[:batch_size_t], c[:batch_size_t]))
-            else:
+                preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            elif self.rnn_cell == "GRU":
                 h = self.decode_step(rnn_input, h[:batch_size_t])
+                preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            else:  # mGRU, miGRU
+                if h is not None:
+                    h = self.decode_step(rnn_input[:, None, :], h[:batch_size_t])
+                else:
+                    h = self.decode_step(rnn_input[:, None, :])
+                preds = self.fc(self.dropout(h[:, 0, :]))  # (batch_size_t, vocab_size)
+
+            # print(h.shape)
             
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
             if self.proof_of_concept:
                 for bi in range(batch_size_t):
-                    predictions[bi, t, targets[bi, t + 1]] = 1
+                    predictions[bi, t, :] = -16.118
+                    predictions[bi, t, targets[bi, t + 1]] = -8.9e-6
             else:
                 predictions[:batch_size_t, t, :] = preds
 
@@ -232,10 +330,15 @@ class TokenDecoder(nn.Module):
         else:
             h = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
 
-            return {
-                "encoder_out": encoder_out,
-                "h": h,
-            }
+            if h is not None:
+                return {
+                    "encoder_out": encoder_out,
+                    "h": h,
+                }
+            else:
+                return {
+                    "encoder_out": encoder_out,
+                }
 
     def predict_next(self, inputs, contexts):
         
@@ -255,10 +358,16 @@ class TokenDecoder(nn.Module):
         
         if self.rnn_cell == "LSTM":
             h, c = self.decode_step(rnn_input, (contexts["h"], contexts["c"]))
-        else:
+            scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+        elif self.rnn_cell == "GRU":
             h = self.decode_step(rnn_input, contexts["h"])
-
-        scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+        else:  # mGRU, miGRU
+            if "h" in contexts:
+                h = self.decode_step(rnn_input[:, None, :], contexts["h"])
+            else:
+                h = self.decode_step(rnn_input[:, None, :])
+            scores = self.fc(self.dropout(h[:, 0, :]))  # (batch_size_t, vocab_size)
 
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         
@@ -472,13 +581,15 @@ class DecoderWithAttention(nn.Module):
             if self.training:
                 if self.proof_of_concept:
                     for bi in range(batch_size_t):
-                        predictions[bi, t, 0, captions[bi, t + 1, 0]] = 1
+                        predictions[bi, t, 0, :] = -16.118
+                        predictions[bi, t, 0, captions[bi, t + 1, 0]] = -8.9e-6
                 else:
                     predictions[:batch_size_t, t, 0, :] = preds
             else:
                 if self.proof_of_concept:
                     for bi in range(batch_size_t):
-                        predictions[bi, t, captions[bi, t + 1]] = 1
+                        predictions[bi, t, :] = -16.118
+                        predictions[bi, t, captions[bi, t + 1]] = -8.9e-6
                 else:
                     predictions[:batch_size_t, t, :] = preds
                 
@@ -495,7 +606,8 @@ class DecoderWithAttention(nn.Module):
                         captions[:batch_size_t, t + 1, 0] != 4
                     ))[0]
                     for ci in ct_indices:
-                        predictions[ci, t, 1, 4] = 1  # <end>
+                        predictions[ci, t, 1, :] = -16.118
+                        predictions[ci, t, 1, 4] = -8.9e-6  # <end>
                 else:
                     indices = torch.where(captions[:batch_size_t, t + 1, 0] != 4)[0]
             else:
@@ -532,12 +644,14 @@ class DecoderWithAttention(nn.Module):
             else:
                 generator = self.generator(max_seq_len=self.max_len_lt - 1)
                 for bi in indices:
-                    _, out_scores, out_length = generator.search(
+                    out_sequences, out_scores, out_length = generator.search(
                         self.token_decoder, ph[bi][None], 
                         init_input=preds_captions[bi])
                     if self.proof_of_concept:
+                        print(out_length, out_sequences)
                         out_scores = torch.zeros_like(out_scores)
-                        out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = 1
+                        out_scores[0, out_length[0] - 2, :] = -16.118
+                        out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = -8.9e-6
                     predictions[bi, t, :] = out_scores[0, out_length[0] - 2, :]
 
             # print(predictions.shape, preds.shape)
