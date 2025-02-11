@@ -24,7 +24,7 @@ def box_cxcywh_to_xyxy(x):
 class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
-                 label_trans = None, multi_label: bool = False, label_aug_prob: float = None,
+                 label_trans = None, multi_label: str = None, label_aug_prob: float = None,
                  has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False):
         super().__init__()
         self.image_path = image_path
@@ -33,6 +33,7 @@ class ImageCodeDataset(Dataset):
         self.transform = transform
 
         self.multi_label = multi_label
+        assert multi_label in [None, "multi", "multi-invert"]
         self.label_aug_prob = label_aug_prob
         
         self.label_trans = label_trans
@@ -117,13 +118,31 @@ class ImageCodeDataset(Dataset):
                     if np.random.rand() < self.label_aug_prob:
                         item["code"][i] = np.random.choice(self.label_trans[item["code"][i]])
 
-            if self.multi_label:
+            if self.multi_label == "multi":
                 new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
                 new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
                 new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
                 for i in range(item["code_len"]):
                     lts = self.label_trans[code[i]][::-1]
                     new_code_train[i, :len(lts)] = lts
+                    new_code_valid[i] = new_code_train[i, 0] 
+                    if code[i] != 4:
+                        new_code_train[i, len(lts)] = 4  # <eos>
+                        new_code_lt_len[i] = len(lts) + 1
+                    else:
+                        new_code_lt_len[i] = len(lts)
+                item["code_train"] = new_code_train
+                item["code_valid"] = new_code_valid
+                item["code_lt_len"] = new_code_lt_len 
+            elif self.multi_label == "multi-invert":
+                new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+                new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
+                new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
+                for i in range(item["code_len"]):
+                    lts = self.label_trans[code[i]]
+                    new_code_train[i, 0] = lts[-1]
+                    if len(lts) > 1:
+                        new_code_train[i, 1:len(lts)] = lts[:-1]
                     new_code_valid[i] = new_code_train[i, 0] 
                     if code[i] != 4:
                         new_code_train[i, len(lts)] = 4  # <eos>

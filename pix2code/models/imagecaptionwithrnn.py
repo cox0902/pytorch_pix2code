@@ -205,9 +205,9 @@ class LSA(nn.Module):
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.temperature.exp()
 
-        mask = torch.eye(dots.shape[-1], device = dots.device, dtype = torch.bool)
-        mask_value = -torch.finfo(dots.dtype).max
-        dots = dots.masked_fill(mask, mask_value)
+        # mask = torch.eye(dots.shape[-1], device = dots.device, dtype = torch.bool)
+        # mask_value = -torch.finfo(dots.dtype).max
+        # dots = dots.masked_fill(mask, mask_value)
 
         attn = self.attend(dots)
         attn = self.dropout(attn)
@@ -468,7 +468,8 @@ class DecoderWithAttention(nn.Module):
                  tf_decoder = 1.0,
                  tf_token_decoder = 1.0,
                  ignore_control_tokens = False,
-                 disable_cat = False
+                 disable_cat = False,
+                 invert_token = False
     ):
         """
         :param attention_dim: size of attention network
@@ -493,6 +494,7 @@ class DecoderWithAttention(nn.Module):
         self.enable_memory = enable_memory
         self.tf_decoder = tf_decoder
         self.ignore_control_tokens = ignore_control_tokens
+        self.invert_token = invert_token
 
         self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
 
@@ -713,9 +715,20 @@ class DecoderWithAttention(nn.Module):
                     if self.proof_of_concept:
                         # print(out_length, out_sequences)
                         out_scores = torch.zeros_like(out_scores)
-                        out_scores[0, out_length[0] - 2, :] = -16.118
-                        out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = -8.9e-6
-                    predictions[bi, t, :] = out_scores[0, out_length[0] - 2, :]
+                        if self.invert_token:
+                            out_scores[0, 1, :] = -16.118
+                            out_scores[0, 1, captions_target[bi, t + 1]] = -8.9e-6
+                        else:
+                            out_scores[0, out_length[0] - 2, :] = -16.118
+                            out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = -8.9e-6
+                    
+                    if out_length[0] == 1:
+                        continue
+
+                    if self.invert_token:
+                        predictions[bi, t, :] = out_scores[0, 1, :]
+                    else:
+                        predictions[bi, t, :] = out_scores[0, out_length[0] - 2, :]
 
             # print(predictions.shape, preds.shape)
 
@@ -763,6 +776,7 @@ class ImageCaptionWithRnn(nn.Module):
             ignore_control_tokens = None,
             ignore_easy_sample = None,
             ignore_hard_sample = None,
+            invert_token = None,
             proof_of_concept: bool = False
     ):
         super().__init__()
@@ -778,6 +792,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.disable_cat = (disable_cat == '1')
         self.ignore_easy_sample = (float(ignore_easy_sample) if ignore_easy_sample is not None else None)
         self.ignore_hard_sample = (float(ignore_hard_sample) if ignore_hard_sample is not None else None)
+        self.invert_token = (invert_token == '1')
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "rnn_cell": self.rnn_cell,
@@ -791,6 +806,7 @@ class ImageCaptionWithRnn(nn.Module):
                 "disable_cat": self.disable_cat,
                 "ignore_easy_sample": self.ignore_easy_sample,
                 "ignore_hard_sample": self.ignore_hard_sample,
+                "invert_token": self.invert_token
             }.items()
         ])))
 
@@ -815,7 +831,8 @@ class ImageCaptionWithRnn(nn.Module):
                                             tf_decoder=self.tf_decoder,
                                             tf_token_decoder=self.tf_token_decoder,
                                             ignore_control_tokens=self.ignore_control_tokens,
-                                            disable_cat=self.disable_cat)
+                                            disable_cat=self.disable_cat,
+                                            invert_token=self.invert_token)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
