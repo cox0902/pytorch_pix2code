@@ -126,8 +126,8 @@ class BeamSearch:
         output_scores = torch.zeros((batch_size, self.max_seq_len, self.vocab_size), dtype=torch.float).to(images.device)
         for bi in range(batch_size):
             for ti in range(sequences.size(1)):
-                output_scores[bi, ti, :] = -16.118
-                output_scores[bi, ti, sequences[bi, ti]] = -8.9e-6
+                # output_scores[bi, ti, :] = -16.118
+                output_scores[bi, ti, sequences[bi, ti]] = 1  # -8.9e-6
 
                 if sequences[bi, ti] != 0:
                     length[bi] += 1

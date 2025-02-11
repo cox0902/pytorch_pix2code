@@ -363,8 +363,8 @@ class TokenDecoder(nn.Module):
             
             if self.proof_of_concept:
                 for bi in range(batch_size_t):
-                    predictions[bi, t, :] = -16.118
-                    predictions[bi, t, targets[bi, t + 1]] = -8.9e-6
+                    # predictions[bi, t, :] = -16.118
+                    predictions[bi, t, targets[bi, t + 1]] = 1  # -8.9e-6
             else:
                 predictions[:batch_size_t, t, :] = preds
 
@@ -646,15 +646,15 @@ class DecoderWithAttention(nn.Module):
             if self.training:
                 if self.proof_of_concept:
                     for bi in range(batch_size_t):
-                        predictions[bi, t, 0, :] = -16.118
-                        predictions[bi, t, 0, captions[bi, t + 1, 0]] = -8.9e-6
+                        # predictions[bi, t, 0, :] = -16.118
+                        predictions[bi, t, 0, captions[bi, t + 1, 0]] = 1  # -8.9e-6
                 else:
                     predictions[:batch_size_t, t, 0, :] = preds
             else:
                 if self.proof_of_concept:
                     for bi in range(batch_size_t):
-                        predictions[bi, t, :] = -16.118
-                        predictions[bi, t, captions[bi, t + 1]] = -8.9e-6
+                        # predictions[bi, t, :] = -16.118
+                        predictions[bi, t, captions[bi, t + 1]] = 1  # -8.9e-6
                 else:
                     predictions[:batch_size_t, t, :] = preds
                 
@@ -671,8 +671,8 @@ class DecoderWithAttention(nn.Module):
                         captions[:batch_size_t, t + 1, 0] != 4
                     ))[0]
                     for ci in ct_indices:
-                        predictions[ci, t, 1, :] = -16.118
-                        predictions[ci, t, 1, 4] = -8.9e-6  # <end>
+                        # predictions[ci, t, 1, :] = -16.118
+                        predictions[ci, t, 1, 4] = 1  # -8.9e-6  # <end>
                 else:
                     indices = torch.where(captions[:batch_size_t, t + 1, 0] != 4)[0]
             else:
@@ -716,11 +716,11 @@ class DecoderWithAttention(nn.Module):
                         # print(out_length, out_sequences)
                         out_scores = torch.zeros_like(out_scores)
                         if self.invert_token:
-                            out_scores[0, 1, :] = -16.118
-                            out_scores[0, 1, captions_target[bi, t + 1]] = -8.9e-6
+                            # out_scores[0, 1, :] = -16.118
+                            out_scores[0, 1, captions_target[bi, t + 1]] = 1  # -8.9e-6
                         else:
-                            out_scores[0, out_length[0] - 2, :] = -16.118
-                            out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = -8.9e-6
+                            # out_scores[0, out_length[0] - 2, :] = -16.118
+                            out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = 1  # -8.9e-6
                     
                     if out_length[0] == 1:
                         continue

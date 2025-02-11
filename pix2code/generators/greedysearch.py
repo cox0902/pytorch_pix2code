@@ -28,8 +28,8 @@ class GreedySearch:
 
         output_scores = torch.zeros((batch_size, self.max_seq_len, self.vocab_size), dtype=torch.float).to(images.device)
         for bt in range(batch_size):
-            output_scores[bt, 0, :] = -16.118
-            output_scores[bt, 0, inputs[bt, 0]] = -8.9e-6
+            # output_scores[bt, 0, :] = -16.118
+            output_scores[bt, 0, inputs[bt, 0]] = 1  # -8.9e-6
 
         mask = torch.ones((batch_size, ), dtype=torch.bool)
         length = torch.ones((batch_size, ), dtype=torch.int)
@@ -74,8 +74,8 @@ class GreedySearch:
         indices = torch.where(torch.logical_and(inputs[:, -2] != 0, inputs[:, -2] != 4))  # <pad> or <end>
         mask[indices] = 1
         inputs[mask, -1] = 4  # <end>   
-        output_scores[mask, -1, :] = -16.118
-        output_scores[mask, -1, 4] = -8.9e-6
+        # output_scores[mask, -1, :] = -16.118
+        output_scores[mask, -1, 4] = 1  # -8.9e-6
         length[mask] = self.max_seq_len
 
         return inputs, output_scores, length
