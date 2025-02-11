@@ -90,6 +90,7 @@ class TokenDecoder(nn.Module):
 
     def __init__(self, embed_dim, encoder_dim, decoder_dim, attention_dim, vocab_size, 
                  dropout=0.2, proof_of_concept=False, 
+                 rnn_cell="LSTM",
                  enable_attention=False,
                  enable_encoder=None,
                  tf_token_decoder=1.0,
@@ -102,6 +103,7 @@ class TokenDecoder(nn.Module):
         self.enable_attention = enable_attention
         self.tf_token_decoder = tf_token_decoder
         self.disable_cat = disable_cat
+        self.rnn_cell = rnn_cell
 
         if self.enable_attention:
             self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
@@ -111,18 +113,27 @@ class TokenDecoder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
 
+        if self.rnn_cell == "LSTM":
+            cell_class = nn.LSTMCell
+            self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+            self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
+        elif self.rnn_cell == "GRU":
+            cell_class = nn.GRUCell
+            self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+        else:
+            assert False, self.rnn_cell
+
         if enable_encoder is not None:
-            self.encode_step = nn.LSTMCell(encoder_dim, encoder_dim, bias=True)
+            self.encode_step = cell_class(encoder_dim, encoder_dim, bias=True)
         else:
             self.encode_step = None
 
         if self.disable_cat:
-            self.decode_step = nn.LSTMCell(embed_dim, decoder_dim, bias=True)  # decoding LSTMCell
+            self.decode_step = cell_class(embed_dim, decoder_dim, bias=True)  # decoding LSTMCell
         else:
-            self.decode_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+            self.decode_step = cell_class(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
+
         self.fc = nn.Linear(decoder_dim, vocab_size)  # linear layer to find scores over vocabulary
-        self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
-        self.init_c = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
         
         self.init_weights()
 
@@ -132,9 +143,13 @@ class TokenDecoder(nn.Module):
         self.fc.weight.data.uniform_(-0.1, 0.1)
 
     def init_hidden_state(self, encoder_out):
-        h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
-        c = self.init_c(encoder_out)
-        return h, c
+        if self.rnn_cell == "LSTM":
+            h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
+            c = self.init_c(encoder_out)
+            return h, c
+        else:
+            h = self.init_h(encoder_out)  # (batch_size, decoder_dim)
+            return h
     
     def forward(self, encoder_out, targets, target_lengths):
         
@@ -147,9 +162,12 @@ class TokenDecoder(nn.Module):
             hiddens = None
             for t in range(encoder_out.size(1)):
                 hiddens = self.encode_step(encoder_out[:, t, :], hiddens)
-            encoder_out = hiddens[0]
+            encoder_out = hiddens[0] if self.rnn_cell == "LSTM" else hiddens
 
-        h, c = self.init_hidden_state(encoder_out)
+        if self.rnn_cell == "LSTM":
+            h, c = self.init_hidden_state(encoder_out)
+        else:
+            h = self.init_hidden_state(encoder_out)
 
         embeddings = self.embedding(targets)
 
@@ -177,12 +195,14 @@ class TokenDecoder(nn.Module):
                 tf_embeddings = ta_embeddings
 
             if self.disable_cat:
-                h, c = self.decode_step(embeddings[:batch_size_t, t, :], 
-                                        (h[:batch_size_t], c[:batch_size_t]))
+                rnn_input = embeddings[:batch_size_t, t, :]
             else:
-                h, c = self.decode_step(
-                    torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1),
-                    (h[:batch_size_t], c[:batch_size_t]))
+                rnn_input = torch.cat([embeddings[:batch_size_t, t, :], attention_weighted_encoding], dim=1)
+
+            if self.rnn_cell == "LSTM":
+                h, c = self.decode_step(rnn_input, (h[:batch_size_t], c[:batch_size_t]))
+            else:
+                h = self.decode_step(rnn_input, h[:batch_size_t])
             
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
             if self.proof_of_concept:
@@ -199,22 +219,30 @@ class TokenDecoder(nn.Module):
             hiddens = None
             for t in range(encoder_out.size(1)):
                 hiddens = self.encode_step(encoder_out[:, t, :], hiddens)
-            encoder_out = hiddens[0]
+            encoder_out = hiddens[0] if self.rnn_cell == "LSTM" else hiddens
 
-        h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        
-        return {
-            "encoder_out": encoder_out,
-            "h": h,
-            "c": c,
-        }
+        if self.rnn_cell == "LSTM":
+            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+
+            return {
+                "encoder_out": encoder_out,
+                "h": h,
+                "c": c,
+            }
+        else:
+            h = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+
+            return {
+                "encoder_out": encoder_out,
+                "h": h,
+            }
 
     def predict_next(self, inputs, contexts):
         
         embeddings = self.embedding(inputs[:, -1])
 
         if self.disable_cat:
-            h, c = self.decode_step(embeddings, (contexts["h"], contexts["c"]))
+            rnn_input = embeddings
         else:
             if self.enable_attention:
                 attention_weighted_encoding, _ = self.attention(contexts["encoder_out"], contexts["h"])
@@ -223,18 +251,26 @@ class TokenDecoder(nn.Module):
             else:
                 attention_weighted_encoding = contexts["encoder_out"]
 
-            # with torch.no_grad() should be called outside this scope.
-            h, c = self.decode_step(torch.cat([embeddings, attention_weighted_encoding], dim=1), 
-                                    (contexts["h"], contexts["c"]))
+            rnn_input = torch.cat([embeddings, attention_weighted_encoding], dim=1)
+        
+        if self.rnn_cell == "LSTM":
+            h, c = self.decode_step(rnn_input, (contexts["h"], contexts["c"]))
+        else:
+            h = self.decode_step(rnn_input, contexts["h"])
 
         scores = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
 
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         
-        return predicts, scores, {
-            "h": h,
-            "c": c,
-        }
+        if self.rnn_cell == "LSTM":
+            return predicts, scores, {
+                "h": h,
+                "c": c,
+            }
+        else:
+            return predicts, scores, {
+                "h": h,
+            }
 
 
 class DecoderWithAttention(nn.Module):
@@ -251,6 +287,7 @@ class DecoderWithAttention(nn.Module):
                  encoder_dim=2048, 
                  dropout=0.5,
                  proof_of_concept: bool = False, 
+                 rnn_cell="LSTM",
                  enable_attention = False, 
                  enable_fc = False,
                  enable_encoder = None,
@@ -302,6 +339,7 @@ class DecoderWithAttention(nn.Module):
         self.token_decoder = TokenDecoder(embed_dim, decoder_dim, 256, attention_dim, 
                                           vocab_size, dropout=dropout,
                                           proof_of_concept=self.proof_of_concept, 
+                                          rnn_cell=rnn_cell,
                                           enable_attention=enable_attention,
                                           enable_encoder=enable_encoder,
                                           tf_token_decoder=tf_token_decoder,
@@ -536,6 +574,7 @@ class ImageCaptionWithRnn(nn.Module):
             vocab_size: int, 
             max_len: int,
             max_len_lt: int,
+            rnn_cell: str = "LSTM",
             enable_attention = None, 
             enable_fc = None, 
             enable_encoder = None,
@@ -551,6 +590,7 @@ class ImageCaptionWithRnn(nn.Module):
     ):
         super().__init__()
 
+        self.rnn_cell = rnn_cell
         self.enable_attention = (enable_attention == "1")
         self.enable_fc = (enable_fc == '1')
         self.enable_encoder = (int(enable_encoder) if enable_encoder is not None else None)
@@ -563,6 +603,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.ignore_hard_sample = (float(ignore_hard_sample) if ignore_hard_sample is not None else None)
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
+                "rnn_cell": self.rnn_cell,
                 "enable_attention": self.enable_attention,
                 "enable_fc": self.enable_fc,
                 "enable_encoder": self.enable_encoder,
@@ -588,6 +629,7 @@ class ImageCaptionWithRnn(nn.Module):
                                             max_len_lt=max_len_lt,
                                             dropout=0.5,
                                             proof_of_concept=self.proof_of_concept,
+                                            rnn_cell=rnn_cell,
                                             enable_attention=self.enable_attention,
                                             enable_fc=self.enable_fc,
                                             enable_encoder=self.enable_encoder,
