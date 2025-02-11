@@ -5,6 +5,7 @@ import transformers
 from functools import partial
 import torch.nn.functional as F
 from torch.nn import Linear, Identity, Module
+from einops import rearrange, repeat
 
 
 # https://arxiv.org/abs/2410.01201v1
@@ -164,12 +165,65 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 
+class LSA(nn.Module):
+    def __init__(self, q_dim, k_dim, v_dim, heads = 8, dim_head = 64, dropout = 0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        self.heads = heads
+        self.temperature = nn.Parameter(torch.log(torch.tensor(dim_head ** -0.5)))
+
+        self.norm_q = nn.LayerNorm(q_dim)
+        self.norm_k = nn.LayerNorm(k_dim)
+        self.norm_v = nn.LayerNorm(v_dim)
+
+        self.attend = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout)
+
+        self.to_q = nn.Linear(q_dim, inner_dim, bias = False)
+        self.to_k = nn.Linear(k_dim, inner_dim, bias = False)
+        self.to_v = nn.Linear(v_dim, inner_dim, bias = False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, v_dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, q, k, v):
+        # print(q.shape, k.shape, v.shape)
+
+        q = self.norm_q(q)
+        k = self.norm_k(k)
+        v = self.norm_v(v)
+
+        q = self.to_q(q)
+        k = self.to_k(k)
+        v = self.to_v(v)
+        
+        q = rearrange(q, 'b (h d) -> b h d', h = self.heads)
+        k = rearrange(k, 'b (h d) -> b h d', h = self.heads)
+        v = rearrange(v, 'b (h d) -> b h d', h = self.heads)
+
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.temperature.exp()
+
+        mask = torch.eye(dots.shape[-1], device = dots.device, dtype = torch.bool)
+        mask_value = -torch.finfo(dots.dtype).max
+        dots = dots.masked_fill(mask, mask_value)
+
+        attn = self.attend(dots)
+        attn = self.dropout(attn)
+
+        out = torch.matmul(attn, v)
+        out = rearrange(out, 'b h d -> b (h d)')
+        return self.to_out(out) 
+
+
 class TokenDecoder(nn.Module):
 
     def __init__(self, embed_dim, encoder_dim, decoder_dim, attention_dim, vocab_size, 
-                 dropout=0.2, proof_of_concept=False, 
+                 dropout=0.2, 
+                 proof_of_concept=False, 
                  rnn_cell="LSTM",
-                 enable_attention=False,
+                 enable_attention=None,
                  enable_encoder=None,
                  tf_token_decoder=1.0,
                  disable_cat=False,
@@ -183,10 +237,12 @@ class TokenDecoder(nn.Module):
         self.disable_cat = disable_cat
         self.rnn_cell = rnn_cell
 
-        if self.enable_attention:
+        if self.enable_attention == 1:
             self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
             self.f_beta = nn.Linear(decoder_dim, encoder_dim)  # linear layer to create a sigmoid-activated gate
             self.sigmoid = nn.Sigmoid()
+        elif self.enable_attention == 2:
+            self.attention = LSA(decoder_dim, encoder_dim, encoder_dim)
         
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
@@ -266,10 +322,13 @@ class TokenDecoder(nn.Module):
         for t in range(max(decode_lengths)):
             batch_size_t = sum([l > t for l in decode_lengths])
 
-            if self.enable_attention:
+            if self.enable_attention == 1:
                 attention_weighted_encoding, _ = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
                 gate = self.sigmoid(self.f_beta(h[:batch_size_t]))  # gating scalar, (batch_size_t, encoder_dim)
                 attention_weighted_encoding = gate * attention_weighted_encoding
+            elif self.enable_attention == 2:
+                attention_weighted_encoding = self.attention(
+                    h[:batch_size_t, :], encoder_out[:batch_size_t, :], encoder_out[:batch_size_t, :])
             else:
                 attention_weighted_encoding = encoder_out[:batch_size_t]
 
@@ -347,10 +406,14 @@ class TokenDecoder(nn.Module):
         if self.disable_cat:
             rnn_input = embeddings
         else:
-            if self.enable_attention:
+            if self.enable_attention == 1:
                 attention_weighted_encoding, _ = self.attention(contexts["encoder_out"], contexts["h"])
                 gate = self.sigmoid(self.f_beta(contexts["h"]))  # gating scalar, (batch_size_t, encoder_dim)
                 attention_weighted_encoding = gate * attention_weighted_encoding
+            elif self.enable_attention == 2:
+                attention_weighted_encoding = self.attention(
+                    contexts["h"], contexts["encoder_out"], contexts["encoder_out"]
+                )
             else:
                 attention_weighted_encoding = contexts["encoder_out"]
 
@@ -397,7 +460,7 @@ class DecoderWithAttention(nn.Module):
                  dropout=0.5,
                  proof_of_concept: bool = False, 
                  rnn_cell="LSTM",
-                 enable_attention = False, 
+                 enable_attention = None, 
                  enable_fc = False,
                  enable_encoder = None,
                  enable_memory = None,
@@ -648,7 +711,7 @@ class DecoderWithAttention(nn.Module):
                         self.token_decoder, ph[bi][None], 
                         init_input=preds_captions[bi])
                     if self.proof_of_concept:
-                        print(out_length, out_sequences)
+                        # print(out_length, out_sequences)
                         out_scores = torch.zeros_like(out_scores)
                         out_scores[0, out_length[0] - 2, :] = -16.118
                         out_scores[0, out_length[0] - 2, captions_target[bi, t + 1]] = -8.9e-6
@@ -705,7 +768,7 @@ class ImageCaptionWithRnn(nn.Module):
         super().__init__()
 
         self.rnn_cell = rnn_cell
-        self.enable_attention = (enable_attention == "1")
+        self.enable_attention = (int(enable_attention) if enable_attention != None else None)
         self.enable_fc = (enable_fc == '1')
         self.enable_encoder = (int(enable_encoder) if enable_encoder is not None else None)
         self.enable_memory = (float(enable_memory) if enable_memory is not None else None)
