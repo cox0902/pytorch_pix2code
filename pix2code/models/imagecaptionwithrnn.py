@@ -227,6 +227,7 @@ class TokenDecoder(nn.Module):
                  enable_encoder=None,
                  tf_token_decoder=1.0,
                  disable_cat=False,
+                 enable_layer_norm=False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
@@ -246,6 +247,11 @@ class TokenDecoder(nn.Module):
         
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
         self.dropout = nn.Dropout(p=self.dropout)
+
+        if enable_layer_norm:
+            self.norm = nn.LayerNorm(encoder_dim)
+        else:
+            self.norm = None
 
         if self.rnn_cell == "LSTM":
             cell_class = nn.LSTMCell
@@ -301,6 +307,9 @@ class TokenDecoder(nn.Module):
         targets = targets[sort_ind]  # (batch_size, seq_len)
         target_lengths = target_lengths[sort_ind]
         encoder_out = encoder_out[sort_ind]
+
+        if self.norm is not None:
+            encoder_out = self.norm(encoder_out)
 
         if self.encode_step is not None:
             hiddens = None
@@ -469,7 +478,8 @@ class DecoderWithAttention(nn.Module):
                  tf_token_decoder = 1.0,
                  ignore_control_tokens = False,
                  disable_cat = False,
-                 invert_token = False
+                 invert_token = False,
+                 enable_layer_norm = False,
     ):
         """
         :param attention_dim: size of attention network
@@ -517,6 +527,7 @@ class DecoderWithAttention(nn.Module):
                                           enable_attention=enable_attention,
                                           enable_encoder=enable_encoder,
                                           tf_token_decoder=tf_token_decoder,
+                                          enable_layer_norm=enable_layer_norm,
                                           disable_cat=disable_cat)
         self.init_weights()  # initialize some layers with the uniform distribution
 
@@ -777,6 +788,7 @@ class ImageCaptionWithRnn(nn.Module):
             ignore_easy_sample = None,
             ignore_hard_sample = None,
             invert_token = None,
+            enable_layer_norm = None,
             proof_of_concept: bool = False
     ):
         super().__init__()
@@ -793,6 +805,7 @@ class ImageCaptionWithRnn(nn.Module):
         self.ignore_easy_sample = (float(ignore_easy_sample) if ignore_easy_sample is not None else None)
         self.ignore_hard_sample = (float(ignore_hard_sample) if ignore_hard_sample is not None else None)
         self.invert_token = (invert_token == '1')
+        self.enable_layer_norm = (enable_layer_norm == '1')
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "rnn_cell": self.rnn_cell,
@@ -806,7 +819,8 @@ class ImageCaptionWithRnn(nn.Module):
                 "disable_cat": self.disable_cat,
                 "ignore_easy_sample": self.ignore_easy_sample,
                 "ignore_hard_sample": self.ignore_hard_sample,
-                "invert_token": self.invert_token
+                "invert_token": self.invert_token,
+                "enable_layer_norm": self.enable_layer_norm
             }.items()
         ])))
 
@@ -832,6 +846,7 @@ class ImageCaptionWithRnn(nn.Module):
                                             tf_token_decoder=self.tf_token_decoder,
                                             ignore_control_tokens=self.ignore_control_tokens,
                                             disable_cat=self.disable_cat,
+                                            enable_layer_norm=self.enable_layer_norm,
                                             invert_token=self.invert_token)
         self.criterion = nn.CrossEntropyLoss()
         

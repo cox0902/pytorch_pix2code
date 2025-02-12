@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
+from einops import rearrange, repeat
 
 
 class InjectModule(nn.Module):
@@ -55,8 +55,9 @@ class RnnClsHead(InjectModule):
         self.out_features = out_features
         self.reset()
 
+        self.embedding = nn.Embedding(90, self.in_features)  # embedding layer
         self.norm = nn.LayerNorm(self.in_features)
-        self.rnn_step = nn.LSTMCell(self.in_features, self.in_features)
+        self.rnn_step = nn.LSTMCell(self.in_features * 2, self.in_features)
         self.init_h = nn.Linear(self.in_features, self.in_features)
         self.init_c = nn.Linear(self.in_features, self.in_features)
         self.dropout = nn.Dropout(dropout)
@@ -81,6 +82,10 @@ class RnnClsHead(InjectModule):
             else:
                 assert False, name
 
+        #
+        # nn.init.xavier_uniform_(self.embedding.weight.data)
+        self.embedding.weight.data.uniform_(-0.1, 0.1)
+        
         #
         for each in [self.fc, self.init_h, self.init_c]:
             nn.init.xavier_uniform_(each.weight.data)
@@ -124,7 +129,7 @@ class RnnClsHead(InjectModule):
 
         target = batch["code"][:, 1:max_decode_length + 1]
         target_len = batch["code_len"] - 1
-        # print(target)
+        print(target)
         # print(target_len)
 
         # target: torch.Tensor = rearrange(target, "b s l -> (b s) l")
@@ -139,13 +144,19 @@ class RnnClsHead(InjectModule):
         # scores_sorted = scores[sort_ind]
         # target_sorted = target[sort_ind]
 
+        inputs = torch.full((1, ), 3).to(target.device)
+        emb = self.embedding(inputs)
+        # print(emb.shape)
+        emb = repeat(emb, "b d -> (s b) d", s=target.size(1))
+        # print(emb.shape)
+
         pred_scores = torch.zeros((target.size(0), target.size(1), self.scores.size(-1)),
                                   dtype=torch.float).to(self.scores.device)
 
         for t in range(batch_size):
             buffer = self.buffer[t, :target_len[t], :]
             h, c = self.init_hidden_state(buffer)
-            h, c = self.rnn_step(buffer, (h, c))
+            h, c = self.rnn_step(torch.cat([emb[:target_len[t], :], buffer], dim=-1), (h, c))
             
             preds = self.fc(self.dropout(h))
             pred_scores[t, :target_len[t], :] = preds  # + self.scores[t, :target_len[t], :]
@@ -166,8 +177,14 @@ class RnnClsHead(InjectModule):
         target_len = batch["code_lt_len"][:, 1:max_decode_length + 1]
         # print(target)
         # print(target_len)
+
+        
         target: torch.Tensor = rearrange(target, "b s l -> (b s) l")
         target_len: torch.Tensor = rearrange(target_len, "b s -> (b s)")
+
+        inputs = torch.full((target.size(0), 1), 3).to(target.device)
+        inputs = torch.cat([inputs, target[:, :-1]], dim=-1)
+        # print(inputs)
 
         target_len_sorted, sort_ind = target_len.sort(dim=0, descending=True)
         target_len_sorted = target_len_sorted.tolist()
@@ -177,6 +194,7 @@ class RnnClsHead(InjectModule):
         buffer_sorted = self.norm(buffer[sort_ind])
         scores_sorted = scores[sort_ind]
         target_sorted = target[sort_ind]
+        inputs_sorted = inputs[sort_ind]
 
         pred_scores = torch.zeros((target.size(0), target.size(-1), scores.size(-1)),
                                   dtype=torch.float).to(scores.device)
@@ -186,7 +204,9 @@ class RnnClsHead(InjectModule):
         for t in range(max(target_len_sorted)):
             batch_size_t = sum([l > t for l in target_len_sorted])
 
-            h, c = self.rnn_step(buffer_sorted[:batch_size_t, :], 
+            emb = self.embedding(inputs_sorted[:batch_size_t, t])
+
+            h, c = self.rnn_step(torch.cat([emb, buffer_sorted[:batch_size_t, :]], dim=1), 
                                  (h[:batch_size_t, :], c[:batch_size_t, :]))
             
             preds = self.fc(self.dropout(h))
