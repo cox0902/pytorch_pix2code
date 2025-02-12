@@ -228,6 +228,7 @@ class TokenDecoder(nn.Module):
                  tf_token_decoder=1.0,
                  disable_cat=False,
                  enable_layer_norm=False,
+                 fine_init=False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
@@ -237,6 +238,7 @@ class TokenDecoder(nn.Module):
         self.tf_token_decoder = tf_token_decoder
         self.disable_cat = disable_cat
         self.rnn_cell = rnn_cell
+        self.fine_init = fine_init
 
         if self.enable_attention == 1:
             self.attention = Attention(encoder_dim, decoder_dim, attention_dim)
@@ -260,11 +262,15 @@ class TokenDecoder(nn.Module):
         elif self.rnn_cell == "GRU":
             cell_class = nn.GRUCell
             self.init_h = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
+            self.init_c = None
         elif self.rnn_cell == "mGRU":
             cell_class = minGRU
+            self.init_h = None
+            self.init_c = None
         elif self.rnn_cell == "miGRU":
             cell_class = minGRU
             self.init_h = nn.Linear(encoder_dim, decoder_dim * 2, bias=False)
+            self.init_c = None
         else:
             assert False, self.rnn_cell
 
@@ -282,10 +288,44 @@ class TokenDecoder(nn.Module):
         
         self.init_weights()
 
+    def init_rnn(self, rnn):
+        for name, param in rnn.named_parameters():
+            if "weight_ih" == name:
+                nn.init.xavier_uniform_(param.data)
+            elif "weight_hh" == name:
+                nn.init.orthogonal_(param.data)
+            elif "bias_ih" == name:
+                param.data.fill_(0)
+                # set forget-gate bias to 1
+                n = param.size(0)
+                param.data[(n // 4):(n // 2)].fill_(1)
+            elif "bias_hh" == name:
+                param.data.fill_(0)
+
     def init_weights(self):
-        self.embedding.weight.data.uniform_(-0.1, 0.1)
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
+        if self.fine_init:
+            # 
+            if self.encode_step is not None:
+                self.init_rnn(self.encode_step)
+            self.init_rnn(self.decode_step)
+
+            #
+            # nn.init.xavier_uniform_(self.embedding.weight.data)
+            self.embedding.weight.data.uniform_(-0.1, 0.1)
+            
+            #
+            init_list = [self.fc]
+            if self.init_h is not None:
+                init_list.append(self.init_h)
+            if self.init_c is not None:
+                init_list.append(self.init_c)
+            for each in init_list:
+                nn.init.xavier_uniform_(each.weight.data)
+                each.bias.data.fill_(0)
+        else:
+            self.embedding.weight.data.uniform_(-0.1, 0.1)
+            self.fc.bias.data.fill_(0)
+            self.fc.weight.data.uniform_(-0.1, 0.1)
 
     def init_hidden_state(self, encoder_out):
         if self.rnn_cell == "LSTM":
@@ -380,6 +420,9 @@ class TokenDecoder(nn.Module):
         return predictions[sort_ind, :, :]
 
     def predict_init(self, encoder_out):
+
+        if self.norm is not None:
+            encoder_out = self.norm(encoder_out)
 
         if self.encode_step is not None:
             hiddens = None
