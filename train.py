@@ -20,11 +20,8 @@ from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
-from pix2code.models import (
-    get_model_class_by_name,
-    Pix2Code, ImageCaption, ImageCaptionWithBox, ImageCaptionWithMsk, ImageCaptionWithRnn,
-    ImageCaptionWithTwo, Vit2Code, ImageCaptionWithTnn
-)
+from pix2code.models import get_model_class_by_name
+from pix2code.tunings import get_ft_model_class_by_name
 from pix2code.generators import GreedySearch, BeamSearch
 
 
@@ -37,6 +34,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--compat", action="store_true")
     parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument("--finetune", type=str)
 
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
@@ -160,6 +158,16 @@ def build_model(args, data_set):
     model_name, model_params = parse_model(args.model)
     assert model_name is not None
 
+    model_class = get_model_class_by_name(model_name)
+    if model_class is None:
+        t = Trainer.load_checkpoint(model_name)
+        m = t.get_inner_model()
+        if args.finetune is not None:
+            ft_model_name, ft_model_params = parse_model(args.finetune)
+            ft_model_class = get_ft_model_class_by_name(ft_model_name)
+            m = ft_model_class(m, **ft_model_params)
+        return m
+
     if args.proof_of_concept:
         model_params["proof_of_concept"] = True
 
@@ -187,12 +195,7 @@ def build_model(args, data_set):
                 vocab_size=model_params["vocab_size"], 
                 conditions=emb_weight)
 
-    model_class = get_model_class_by_name(model_name)
-    if model_class is not None:
-        return model_class(**model_params)
-    else:
-        t = Trainer.load_checkpoint(model_name)
-        return t.get_inner_model()
+    return model_class(**model_params)
 
 
 def main(args):
@@ -220,46 +223,42 @@ def main(args):
 
     has_comma = (not args.no_comma)
     
-    train_set = ImageCodeDataset(
-        args.image_path, 
-        args.code_path, 
-        split_train, 
-        transform=PresetEval(),
-        label_trans=code_lt, 
-        multi_label=args.multi_label, 
-        label_aug_prob=args.label_aug_prob,
-        has_comma=has_comma, 
-        has_rect=has_rect, 
-        mask_rect=mask_rect)
+    train_set = ImageCodeDataset(args.image_path, 
+                                 args.code_path, 
+                                 split_train, 
+                                 transform=PresetEval(),
+                                 label_trans=code_lt, 
+                                 multi_label=args.multi_label, 
+                                 label_aug_prob=args.label_aug_prob,
+                                 has_comma=has_comma, 
+                                 has_rect=has_rect, 
+                                 mask_rect=mask_rect)
     train_set.normalize_rect = norm_rect
     train_set.summary("> Train set")
-    train_loader = DataLoader(
-        train_set, 
-        batch_size=args.batch_size, 
-        shuffle=True, 
-        pin_memory=args.pin_memory, 
-        num_workers=args.workers, 
-        worker_init_fn=seed_worker, 
-        generator=generator)
-        
+    train_loader = DataLoader(train_set, 
+                              batch_size=args.batch_size, 
+                              shuffle=True, 
+                              pin_memory=args.pin_memory, 
+                              num_workers=args.workers, 
+                              worker_init_fn=seed_worker, 
+                              generator=generator)
+         
     if split_valid is not None:
-        valid_set = ImageCodeDataset(
-            args.image_path, 
-            args.code_path, 
-            split_valid, 
-            transform=PresetEval(),
-            label_trans=code_lt, 
-            multi_label=args.multi_label,
-            has_comma=has_comma, 
-            has_rect=has_rect, 
-            mask_rect=mask_rect)
+        valid_set = ImageCodeDataset(args.image_path, 
+                                     args.code_path, 
+                                     split_valid, 
+                                     transform=PresetEval(),
+                                     label_trans=code_lt, 
+                                     multi_label=args.multi_label,
+                                     has_comma=has_comma, 
+                                     has_rect=has_rect, 
+                                     mask_rect=mask_rect)
         valid_set.normalize_rect = norm_rect
         valid_set.summary("> Valid set")
-        valid_loader = DataLoader(
-            valid_set, 
-            batch_size=args.batch_size, 
-            shuffle=True, 
-            pin_memory=args.pin_memory)
+        valid_loader = DataLoader(valid_set, 
+                                  batch_size=args.batch_size, 
+                                  shuffle=True, 
+                                  pin_memory=args.pin_memory)
     else:
         valid_loader = None
 
@@ -281,8 +280,11 @@ def main(args):
     
     #
 
-    trainer = Trainer(model=model, optimizer=optimizer, generator=generator,
-                      is_ema=args.ema, use_amp=args.amp)
+    trainer = Trainer(model=model, 
+                      optimizer=optimizer, 
+                      generator=generator,
+                      is_ema=args.ema, 
+                      use_amp=args.amp)
     trainer.epochs_early_stop = args.epochs_early_stop
     trainer.epochs_adjust_lr = args.epochs_adjust_lr
     trainer.early_stop = args.early_stop
@@ -292,8 +294,11 @@ def main(args):
         trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
 
     if args.lr_find:
-        trainer.lr_find(end_lr=100., step_mode='exp', epochs=100,
-                        train_loader=train_loader, valid_loader=valid_loader)
+        trainer.lr_find(end_lr=100., 
+                        step_mode='exp', 
+                        epochs=100,
+                        train_loader=train_loader, 
+                        valid_loader=valid_loader)
         return
     
     if args.metric == "acc":
@@ -313,39 +318,35 @@ def main(args):
         for each in ems:
             eval_metrics.add_metric(each)
 
-    trainer.fit(
-        epochs=args.epochs, 
-        train_loader=train_loader, 
-        valid_loader=valid_loader, 
-        metrics=metrics, 
-        eval_metrics=eval_metrics, 
-        proof_of_concept=args.proof_of_concept)
+    trainer.fit(epochs=args.epochs, 
+                train_loader=train_loader, 
+                valid_loader=valid_loader, 
+                metrics=metrics, 
+                eval_metrics=eval_metrics, 
+                proof_of_concept=args.proof_of_concept)
     
     if split_test is not None:
         print("=" * 100)
-        test_set = ImageCodeDataset(
-            args.image_path, 
-            args.test_path, 
-            split_test, 
-            transform=PresetEval(),
-            label_trans=code_lt, 
-            multi_label=args.multi_label,
-            has_comma=has_comma, 
-            has_rect=has_rect, 
-            mask_rect=mask_rect)
+        test_set = ImageCodeDataset(args.image_path, 
+                                    args.test_path, 
+                                    split_test, 
+                                    transform=PresetEval(),
+                                    label_trans=code_lt, 
+                                    multi_label=args.multi_label,
+                                    has_comma=has_comma, 
+                                    has_rect=has_rect, 
+                                    mask_rect=mask_rect)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
-        test_loader = DataLoader(
-            test_set, 
-            batch_size=args.batch_size, 
-            shuffle=False, 
-            pin_memory=args.pin_memory)
+        test_loader = DataLoader(test_set, 
+                                 batch_size=args.batch_size, 
+                                 shuffle=False, 
+                                 pin_memory=args.pin_memory)
         
         trainer = Trainer.load_checkpoint("./BEST.pth.tar")
-        _ = trainer.test(
-            data_loader=test_loader, 
-            metrics=eval_metrics, 
-            proof_of_concept=args.proof_of_concept)
+        _ = trainer.test(data_loader=test_loader, 
+                         metrics=eval_metrics, 
+                         proof_of_concept=args.proof_of_concept)
 
 
 if __name__ == "__main__":

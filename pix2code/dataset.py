@@ -56,6 +56,7 @@ class ImageCodeDataset(Dataset):
         self.code_lens = self.hc["les"]
 
         self.is_short = self.images.shape[0] < self.codes.shape[0]
+        self.is_large = self.images.shape[0] > self.codes.shape[0]
 
         self.idx = self.hc["idx"] if has_rect else None
         self.ids = self.hc["ids"] if has_rect else None
@@ -83,7 +84,7 @@ class ImageCodeDataset(Dataset):
     def __getitem__(self, index: int) -> Dict:
         code_idx = self.__idx(index)
         img_idx = code_idx
-        if self.has_rect and self.is_short:
+        if self.has_rect and (self.is_short or self.is_large):
             img_idx = self.idx[img_idx]
 
         image = torch.from_numpy(self.images[img_idx])
@@ -118,12 +119,15 @@ class ImageCodeDataset(Dataset):
                     if np.random.rand() < self.label_aug_prob:
                         item["code"][i] = np.random.choice(self.label_trans[item["code"][i]])
 
-            if self.multi_label == "multi":
+            if self.multi_label in ["multi", "multi-invert"]:
                 new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
                 new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
                 new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
                 for i in range(item["code_len"]):
-                    lts = self.label_trans[code[i]][::-1]
+                    if self.multi_label == "multi":
+                        lts = self.label_trans[code[i]][::-1]
+                    elif self.multi_label == "multi-invert":
+                        lts = self.label_trans[code[i]]
                     new_code_train[i, :len(lts)] = lts
                     new_code_valid[i] = new_code_train[i, 0] 
                     if code[i] != 4:
@@ -134,24 +138,24 @@ class ImageCodeDataset(Dataset):
                 item["code_train"] = new_code_train
                 item["code_valid"] = new_code_valid
                 item["code_lt_len"] = new_code_lt_len 
-            elif self.multi_label == "multi-invert":
-                new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
-                new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
-                new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
-                for i in range(item["code_len"]):
-                    lts = self.label_trans[code[i]]
-                    new_code_train[i, 0] = lts[-1]
-                    if len(lts) > 1:
-                        new_code_train[i, 1:len(lts)] = lts[:-1]
-                    new_code_valid[i] = new_code_train[i, 0] 
-                    if code[i] != 4:
-                        new_code_train[i, len(lts)] = 4  # <eos>
-                        new_code_lt_len[i] = len(lts) + 1
-                    else:
-                        new_code_lt_len[i] = len(lts)
-                item["code_train"] = new_code_train
-                item["code_valid"] = new_code_valid
-                item["code_lt_len"] = new_code_lt_len 
+            # elif self.multi_label == "multi-invert":
+            #     new_code_train = np.zeros((self.max_len, self.max_len_lt), dtype=np.int32)
+            #     new_code_valid = np.zeros((self.max_len, ), dtype=np.int32)
+            #     new_code_lt_len = np.zeros((self.max_len, ), dtype=np.int32)
+            #     for i in range(item["code_len"]):
+            #         lts = self.label_trans[code[i]]
+            #         new_code_train[i, 0] = lts[-1]
+            #         if len(lts) > 1:
+            #             new_code_train[i, 1:len(lts)] = lts[:-1]
+            #         new_code_valid[i] = new_code_train[i, 0] 
+            #         if code[i] != 4:
+            #             new_code_train[i, len(lts)] = 4  # <eos>
+            #             new_code_lt_len[i] = len(lts) + 1
+            #         else:
+            #             new_code_lt_len[i] = len(lts)
+            #     item["code_train"] = new_code_train
+            #     item["code_valid"] = new_code_valid
+            #     item["code_lt_len"] = new_code_lt_len 
 
         if self.has_rect:
             #
