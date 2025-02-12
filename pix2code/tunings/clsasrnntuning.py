@@ -264,7 +264,7 @@ class ClsAsRnnTuning(nn.Module):
         scores = scores[target != 0]
         target = target[target != 0]
         w = self.rnn_cls_head.weight.sigmoid()
-        loss = self.criterion(scores, target)   # - w * math.log(w) - (1 - w) * math.log(1 - w)
+        loss = self.criterion(scores, target) - w * math.log(w) - (1 - w) * math.log(1 - w)
 
         self.rnn_cls_head.reset()
 
