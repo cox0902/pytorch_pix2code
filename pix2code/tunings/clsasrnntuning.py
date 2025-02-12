@@ -1,5 +1,6 @@
 from typing import *
 
+import math
 from functools import partial
 import numpy as np
 import torch
@@ -60,6 +61,9 @@ class RnnClsHead(InjectModule):
         self.init_c = nn.Linear(self.in_features, self.in_features)
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(self.in_features, self.out_features)
+
+        self.weight = nn.Parameter(torch.zeros((1, ), requires_grad=True))
+
         self.init_weights()
 
     def init_weights(self):
@@ -146,7 +150,8 @@ class RnnClsHead(InjectModule):
             h, c = self.rnn_step(buffer, (h, c))
             
             preds = self.fc(self.dropout(h))
-            pred_scores[t, :target_len[t], :] = preds + self.scores[t, :target_len[t], :]
+            w = self.weight.sigmoid()
+            pred_scores[t, :target_len[t], :] = (1 - w) * preds + w * self.scores[t, :target_len[t], :]
 
         return (
             rearrange(pred_scores, "b s v -> (b s) v"), 
@@ -188,7 +193,8 @@ class RnnClsHead(InjectModule):
                                  (h[:batch_size_t, :], c[:batch_size_t, :]))
             
             preds = self.fc(self.dropout(h))
-            pred_scores[:batch_size_t, t, :] = preds + scores_sorted[:batch_size_t, :]
+            w = self.weight.sigmoid()
+            pred_scores[:batch_size_t, t, :] = (1 - w) * preds + w * scores_sorted[:batch_size_t, :]
 
         return (
             rearrange(pred_scores, "b l v -> (b l) v"), 
@@ -197,7 +203,10 @@ class RnnClsHead(InjectModule):
 
 class ClsAsRnnTuning(nn.Module):
 
-    def __init__(self, model: nn.Module, *args, **kwargs):
+    def __init__(self, 
+                 model: nn.Module, 
+                 *args, **kwargs):
+        
         super().__init__(*args, **kwargs)
         self.model = model
         self.freeze()
@@ -254,7 +263,8 @@ class ClsAsRnnTuning(nn.Module):
         scores, target = self.rnn_cls_head.self_forward(batch)
         scores = scores[target != 0]
         target = target[target != 0]
-        loss = self.criterion(scores, target)
+        w = self.rnn_cls_head.weight.sigmoid()
+        loss = self.criterion(scores, target)   # - w * math.log(w) - (1 - w) * math.log(1 - w)
 
         self.rnn_cls_head.reset()
 
