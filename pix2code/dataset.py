@@ -21,6 +21,15 @@ def box_cxcywh_to_xyxy(x):
     return np.concatenate(b, axis=1)
 
 
+def make_mask(rect):
+    mask = np.zeros((256, 256), dtype=np.float32)
+    x0, y0, x1, y1 = np.clip(rect, 0, 255)
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    mask[y0:y1 + 1, x0:x1 + 1] = 1.0
+    mask = torch.FloatTensor(mask)
+    return mask
+
+
 class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
@@ -190,11 +199,12 @@ class ImageCodeDataset(Dataset):
                     assert len(loc[0]) == 1, item["code"]
                     rect = self.rects[loc[0]]
                     
-                    mask = Image.new("L", (image.size(1), image.size(2)), 0)
-                    mask_draw = ImageDraw.Draw(mask)
-                    mask_draw.rectangle(rect, fill=255)
+                    # mask = Image.new("L", (image.size(1), image.size(2)), 0)
+                    # mask_draw = ImageDraw.Draw(mask)
+                    # mask_draw.rectangle(rect, fill=255)
 
-                    masks[i] = torch.FloatTensor(np.asarray(mask) / 255.)
+                    # masks[i] = torch.FloatTensor(np.asarray(mask) / 255.)
+                    masks[i] = make_mask(rect)
                 item["mask"] = masks
             #
             if self.is_short:
@@ -218,14 +228,20 @@ class ImageCodeDataset(Dataset):
                 # mask = torch.FloatTensor(np.asarray(mask) / 255.)
                 # mask = mask.unsqueeze(0)
 
-                mask = np.zeros((256, 256), dtype=np.float32)
-                x0, y0, x1, y1 = np.clip(rect, 0, 255)
-                x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
-                mask[y0:y1 + 1, x0:x1 + 1] = 1.0
-                mask = torch.FloatTensor(mask).unsqueeze(0)
+                # mask = np.zeros((256, 256), dtype=np.float32)
+                # x0, y0, x1, y1 = np.clip(rect, 0, 255)
+                # x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+                # mask[y0:y1 + 1, x0:x1 + 1] = 1.0
+                # mask = torch.FloatTensor(mask).unsqueeze(0)
+                mask = make_mask(rect).unsqueeze(0)
 
                 item["image"] = torch.cat([item["image"], mask], dim=0)
                 item["pid"] = pid
                 item["piv"] = piv if pid != -1 else 3
+
+                if self.normalize_rect:
+                    item["prect"] = box_xyxy_to_cxcywh([rect]) / image.size(-1)
+                else:
+                    item["prect"] = rect
         return item
     

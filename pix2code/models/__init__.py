@@ -1,6 +1,6 @@
 from .pix2code import Pix2Code
 from .imagecaption import ImageCaption
-from .imagecaptionwithbox import ImageCaptionWithBox
+# from .imagecaptionwithbox import ImageCaptionWithBox
 # from .imagecaptionwithrpn import ImageCaptionWithRpn
 # from .imagecaptionwithspa import ImageCaptionWithSpa
 from .imagecaptionwithrnn import ImageCaptionWithRnn
@@ -16,7 +16,7 @@ def get_model_class_by_name(name):
     elif name == "imagecaption":
         return ImageCaption
     elif name in ["imagecaptionwithbox", "icwb"]:
-        return ImageCaptionWithBox
+        return ImageCaption
     elif name in ["imagecaptionwithrnn", "icwr"]:
         return ImageCaptionWithRnn
     elif name in ["imagecaptionwithtnn", "icwt"]:
@@ -32,7 +32,7 @@ def get_model_class_by_name(name):
 __all__ = [
     Pix2Code,
     ImageCaption,
-    ImageCaptionWithBox,
+    # ImageCaptionWithBox,
     ImageCaptionWithRnn,
     # ImageCaptionWithRpn,
     # ImageCaptionWithSpa,
