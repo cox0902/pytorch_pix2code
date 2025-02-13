@@ -240,7 +240,7 @@ class ImageCodeDataset(Dataset):
                 item["piv"] = piv if pid != -1 else 3
 
                 if self.normalize_rect:
-                    rects = np.empty((1, 256, 256), dtype=np.float32)
+                    rects = np.empty((1, 4), dtype=np.float32)
                     rects[0] = rect
                     rect = box_xyxy_to_cxcywh(rects) / image.size(-1)
                     item["prect"] = rect[0]
