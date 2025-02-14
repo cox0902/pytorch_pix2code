@@ -139,24 +139,20 @@ class Rnn(nn.Module):
 
 class TreeNode:
     
-    def __init__(self, iv: Union[int, torch.Tensor], parent: "TreeNode" = None, device = None):
+    def __init__(self, device, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
         self.id = hex(id(self))
         self.iv = torch.tensor(iv) if type(iv) == int else iv.clone()
+        self.iv.to(device)
         self.parent = parent
 
-        if device is not None:
-            self.iv.to(device)
-        elif self.parent is not None:
-            self.iv.to(self.parent.iv.device)
-            
         self.children: List[TreeNode] = []
         self.left: TreeNode = None
         self.right: TreeNode = None
         self.hidden_v = None
         self.hidden_h = None
 
-    def add_child(self, iv) -> "TreeNode":
-        node = TreeNode(iv, self)
+    def add_child(self, device, iv) -> "TreeNode":
+        node = TreeNode(device, iv, self)
         self.children.append(node)
         return node
     
@@ -249,18 +245,18 @@ class TreeNode:
         return prds, tgts
 
     @staticmethod
-    def _finalize(n: "TreeNode"):
-        n.children = [TreeNode(3, n)] + n.children + [TreeNode(4, n)]
+    def _finalize(device, n: "TreeNode"):
+        n.children = [TreeNode(device, 3, n)] + n.children + [TreeNode(device, 4, n)]
         n.children[0].right = n.children[1]
         n.children[-1].left = n.children[-2]
         for i in range(1, len(n.children) - 1):
             n.children[i].left = n.children[i - 1]
             n.children[i].right = n.children[i + 1]
-            TreeNode._finalize(n.children[i])
+            TreeNode._finalize(device, n.children[i])
 
     @staticmethod
     def build_tree(code, device):
-        root = TreeNode(3, device=device)
+        root = TreeNode(device, 3)
         node = root
         queue: List[TreeNode] = [node]
         for iv in code:
@@ -275,9 +271,9 @@ class TreeNode:
                 queue.pop()
                 continue
             assert iv != 0
-            node = queue[-1].add_child(iv)
+            node = queue[-1].add_child(device, iv)
 
-        TreeNode._finalize(root)
+        TreeNode._finalize(device, root)
         return root
 
 
