@@ -132,7 +132,7 @@ class Rnn(nn.Module):
         return h, c
     
     def forward(self, x, y, hidden):
-        print(x.device, self.embedding.device, x)
+        print(x.device, x)
 
         x_emb = self.embedding(x)
         y_hat, _ = self.attention(y, hidden[0])
