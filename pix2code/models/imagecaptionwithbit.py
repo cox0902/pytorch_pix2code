@@ -132,8 +132,6 @@ class Rnn(nn.Module):
         return h, c
     
     def forward(self, x, y, hidden):
-        print(x.device, x)
-
         x_emb = self.embedding(x)
         y_hat, _ = self.attention(y, hidden[0])
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden)
@@ -380,6 +378,9 @@ class DecoderWithAttention(nn.Module):
             alphas_nb = []
 
             tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]], device=encoder_out.device)
+
+            tree.preorder_walk(lambda n: print(n.iv.device))
+
             prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
 
             # print(len(prd), prd[0].shape)
