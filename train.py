@@ -321,12 +321,13 @@ def main(args):
         for each in ems:
             eval_metrics.add_metric(each)
 
-    trainer.fit(epochs=args.epochs, 
-                train_loader=train_loader, 
-                valid_loader=valid_loader, 
-                metrics=metrics, 
-                eval_metrics=eval_metrics, 
-                proof_of_concept=args.proof_of_concept)
+    if not args.test_only:
+        trainer.fit(epochs=args.epochs, 
+                    train_loader=train_loader, 
+                    valid_loader=valid_loader, 
+                    metrics=metrics, 
+                    eval_metrics=eval_metrics, 
+                    proof_of_concept=args.proof_of_concept)
     
     if split_test is not None:
         print("=" * 100)
