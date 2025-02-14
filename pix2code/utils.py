@@ -40,11 +40,12 @@ def get_rng_state(generator: torch.Generator) -> Dict:
 
 def set_rng_state(generator: torch.Generator, state: Optional[Dict] = None) -> Callable:
     if state is not None:
+        print(state["generator"].dtype)
         generator.set_state(state["generator"])
         random.setstate(state["python"])
         np.random.set_state(state["numpy"])
         torch.set_rng_state(state["cpu"])
-        if state["gpu"]:
+        if state["gpu"] is not None:
             torch.cuda.set_rng_state(state["gpu"])
 
     def seed_worker(worker_id):
