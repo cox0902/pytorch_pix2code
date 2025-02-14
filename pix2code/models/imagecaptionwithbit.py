@@ -141,10 +141,9 @@ class TreeNode:
     
     def __init__(self, device, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
         self.id = hex(id(self))
-        self.iv = torch.tensor(iv) if type(iv) == int else iv.clone()
-        self.iv.to(device)
+        self.iv = torch.tensor(iv).to(device) if type(iv) == int else iv.clone().to(device)
 
-        print(self.iv, device, self.iv.device)
+        # print(self.iv, device, self.iv.device)
 
         self.parent = parent
 
