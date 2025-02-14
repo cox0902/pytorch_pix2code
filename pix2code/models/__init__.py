@@ -8,6 +8,7 @@ from .imagecaptionwithmsk import ImageCaptionWithMsk
 from .imagecaptionwithtwo import ImageCaptionWithTwo
 from .vit2code import Vit2Code
 from .imagecaptionwithtnn import ImageCaptionWithTnn
+from .imagecaptionwithbit import ImageCaptionWithBit
 
 
 def get_model_class_by_name(name):
@@ -23,6 +24,8 @@ def get_model_class_by_name(name):
         return ImageCaptionWithTnn
     elif name in ["imagecaptionwithtwo", "icw2"]:
         return ImageCaptionWithTwo
+    elif name in ["ImageCaptionWithBit".lower(), "ibit"]:
+        return ImageCaptionWithBit
     elif name == "vit2code":
         return Vit2Code
     else:

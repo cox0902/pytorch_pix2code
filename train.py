@@ -29,6 +29,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--proof-of-concept", action="store_true")
+    parser.add_argument("--resume", type=str)
     parser.add_argument("--model", type=str)
     parser.add_argument("--model-resnet", type=str)
     parser.add_argument("--compat", action="store_true")
@@ -134,22 +135,12 @@ def check_model(model: str) -> Tuple[bool, bool]:
     # returns (has_rect, norm_rect, mask_rect)
     model_name, model_params = parse_model(model)
     assert model_name is not None
-    if model_name == "pix2code":
-        return False, False, False
-    elif model_name == "imagecaption":
-        return False, False, False
-    elif model_name in ["imagecaptionwithbox", "icwb"]:
+    if model_name in ["imagecaptionwithbox", "icwb"]:
         return True, False, False
-    elif model_name in ["imagecaptionwithrnn", "icwr"]:
-        return False, False, False
-    elif model_name in ["imagecaptionwithtnn", "icwt"]:
-        return False, False, False
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         return True, False, True
     elif model_name in ["imagecaptionwithspa", "icws"]:
         return True, False, False
-    elif model_name in ["vit2code"]:
-        return False, False, False
     else:
         return False, False, False
 
@@ -262,36 +253,47 @@ def main(args):
     else:
         valid_loader = None
 
-    #
+    if args.resume is not None:
 
-    model = build_model(args, train_set)
+        trainer = Trainer.load_checkpoint(args.resume)
+        assert trainer.seed == args.seed
+        generator, seed_worker = seed_everything(args.seed, trainer.state)
+        trainer.generator = generator
 
-    if args.compat:
-        model.criterion = nn.CrossEntropyLoss()
-
-    if args.opt == "adam":
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    elif args.opt == "adamw":
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    elif args.opt == "rmsprop":
-        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
     else:
-        optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
-    
+
+        #
+
+        model = build_model(args, train_set)
+
+        if args.compat:
+            model.criterion = nn.CrossEntropyLoss()
+
+        if args.opt == "adam":
+            optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        elif args.opt == "adamw":
+            optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+        elif args.opt == "rmsprop":
+            optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+        else:
+            optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+        
+        #
+
+        trainer = Trainer(model=model, 
+                        optimizer=optimizer, 
+                        generator=generator,
+                        is_ema=args.ema, 
+                        use_amp=args.amp)
+        trainer.epochs_early_stop = args.epochs_early_stop
+        trainer.epochs_adjust_lr = args.epochs_adjust_lr
+        trainer.early_stop = args.early_stop
+
+        if args.grad_clip:
+            trainer.grad_clip = 1.
+            trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
+
     #
-
-    trainer = Trainer(model=model, 
-                      optimizer=optimizer, 
-                      generator=generator,
-                      is_ema=args.ema, 
-                      use_amp=args.amp)
-    trainer.epochs_early_stop = args.epochs_early_stop
-    trainer.epochs_adjust_lr = args.epochs_adjust_lr
-    trainer.early_stop = args.early_stop
-
-    if args.grad_clip:
-        trainer.grad_clip = 1.
-        trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
 
     if args.lr_find:
         trainer.lr_find(end_lr=100., 
