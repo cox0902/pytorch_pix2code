@@ -36,6 +36,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr-find", action="store_true")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--finetune", type=str)
+    parser.add_argument("--test-only", action="store_true", default=False)
 
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
