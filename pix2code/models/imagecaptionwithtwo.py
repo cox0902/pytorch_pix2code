@@ -242,8 +242,8 @@ class DecoderWithAttention(nn.Module):
             if return_alphas:
                 alphas_nb.append(alpha)
             
-            last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  # <START>
-            queue = [(encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h, init_hidden_v)]
+            h_last = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  # <START>
+            v_queue = [(encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h, init_hidden_v)]
             leaves = []
 
             for ti in range(1, caption_lengths[bi] - 1):
@@ -257,42 +257,42 @@ class DecoderWithAttention(nn.Module):
                     leaves.pop()
 
                     # move next in vertical
-                    new_hidden_v, alpha = self.rnn_forward("ver", e_out, last_h[1], queue[-1][3])
+                    new_hidden_v, alpha = self.rnn_forward("ver", e_out, h_last[1], v_queue[-1][3])
                     if return_alphas:
                         alphas_nb.append(alpha)
-                    queue.append((last_h[0], last_h[1], last_h[2], new_hidden_v))
+                    v_queue.append((h_last[0], h_last[1], h_last[2], new_hidden_v))
 
                     # reset horizital, TODO: pos_embedding
-                    last_h = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  
+                    h_last = (encoded_captions[bi, 0], embeddings[bi, 0], init_hidden_h)  
                     continue
 
                 if token == 6:  # [RB]
                     # make prediction on horzital end
-                    cat = torch.cat([last_h[2][0], queue[-1][3][0]], dim=1)
+                    cat = torch.cat([h_last[2][0], v_queue[-1][3][0]], dim=1)
                     out = self.fc(self.dropout(cat))
                     predict.append(out.squeeze(0))
                     targets.append(torch.tensor(4).to(out.device))
 
-                    poped = queue.pop()
-                    last_h = (poped[0], poped[1], poped[2])
+                    poped = v_queue.pop()
+                    h_last = (poped[0], poped[1], poped[2])
                     continue
 
                 # make prediction
                 # print(last_h[2][0].shape, queue[-1][3][0].shape)
-                cat = torch.cat([last_h[2][0], queue[-1][3][0]], dim=1)
+                cat = torch.cat([h_last[2][0], v_queue[-1][3][0]], dim=1)
                 out = self.fc(self.dropout(cat))
                 # print(out.shape)
                 predict.append(out.squeeze(0))
                 targets.append(token)
 
                 # move next in horzital
-                new_hidden_h, alpha = self.rnn_forward("hor", e_out, token_embed, last_h[2])
+                new_hidden_h, alpha = self.rnn_forward("hor", e_out, token_embed, h_last[2])
                 if return_alphas:
                     alphas_nb.append(alpha)
-                last_h = (token, token_embed, new_hidden_h)  # 
+                h_last = (token, token_embed, new_hidden_h)  # 
 
                 # handle leaves for vertical end
-                leaves.append((token, token_embed, queue[-1][3]))
+                leaves.append((token, token_embed, v_queue[-1][3]))
              
             for leaf in leaves:
                 # move next in vertical

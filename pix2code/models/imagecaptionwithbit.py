@@ -139,9 +139,9 @@ class Rnn(nn.Module):
 
 class TreeNode:
     
-    def __init__(self, iv: int, parent: "TreeNode" = None):
+    def __init__(self, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
         self.id = hex(id(self))
-        self.iv = torch.tensor(iv)
+        self.iv = torch.tensor(iv) if type(iv) == int else iv.clone()
         self.parent = parent
         self.children: List[TreeNode] = []
         self.left: TreeNode = None
@@ -371,6 +371,8 @@ class DecoderWithAttention(nn.Module):
             alphas = []
 
         for bi in range(batch_size):
+            # print(bi)
+
             alphas_nb = []
 
             tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]])
@@ -429,9 +431,10 @@ class ImageCaptionWithBit(nn.Module):
     Image captioning with bi-directional tree rnn.
     """
 
-    def __init__(self, resnet, vocab_size: int, max_len):
+    def __init__(self, resnet, vocab_size: int, max_len,                  
+                 proof_of_concept: bool = False):
         super().__init__()
-        self.proof_of_concept: bool = False
+        self.proof_of_concept: bool = proof_of_concept
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
