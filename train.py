@@ -56,6 +56,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-path", type=str)
     parser.add_argument("--multi-label", type=str)
     parser.add_argument("--label-aug-prob", type=float)
+    parser.add_argument("--force-add-channel", action="store_true", default=False)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -199,6 +200,11 @@ def main(args):
 
     has_rect, norm_rect, mask_rect = check_model(args.model)
 
+    if has_rect and not ImageCodeDataset.is_support_has_rect(args.image_path, args.code_path):
+        print("!! Warning: has_rect is not supported by dataset!")
+        has_rect = False
+        norm_rect = False
+
     if args.split_path is not None:
         split = np.load(args.split_path)
         split_train = split["train"]
@@ -225,7 +231,8 @@ def main(args):
                                     label_aug_prob=args.label_aug_prob,
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
-                                    mask_rect=mask_rect)
+                                    mask_rect=mask_rect,
+                                    force_add_channel=args.force_add_channel)
         train_set.normalize_rect = norm_rect
         train_set.summary("> Train set")
         train_loader = DataLoader(train_set, 
@@ -245,7 +252,8 @@ def main(args):
                                         multi_label=args.multi_label,
                                         has_comma=has_comma, 
                                         has_rect=has_rect, 
-                                        mask_rect=mask_rect)
+                                        mask_rect=mask_rect,
+                                        force_add_channel=args.force_add_channel)
             valid_set.normalize_rect = norm_rect
             valid_set.summary("> Valid set")
             valid_loader = DataLoader(valid_set, 
@@ -340,7 +348,8 @@ def main(args):
                                     multi_label=args.multi_label,
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
-                                    mask_rect=mask_rect)
+                                    mask_rect=mask_rect,
+                                    force_add_channel=args.force_add_channel)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
         test_loader = DataLoader(test_set, 
@@ -348,7 +357,8 @@ def main(args):
                                  shuffle=False, 
                                  pin_memory=args.pin_memory)
         
-        trainer = Trainer.load_checkpoint("./BEST.pth.tar")
+        if not args.test_only:
+            trainer = Trainer.load_checkpoint("./BEST.pth.tar")
         _ = trainer.test(data_loader=test_loader, 
                          metrics=eval_metrics, 
                          proof_of_concept=args.proof_of_concept)

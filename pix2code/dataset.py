@@ -32,14 +32,26 @@ def make_mask(rect):
 
 class ImageCodeDataset(Dataset):
 
+    @staticmethod
+    def is_support_has_rect(image_path: str, code_path: str):
+        with h5py.File(image_path, "r") as hi:
+            if "rects" not in hi:
+                return False
+        with h5py.File(code_path, "r") as ho:
+            if "idx" not in ho:
+                return False
+        return True
+
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
                  label_trans = None, multi_label: str = None, label_aug_prob: float = None,
-                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False):
+                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False,
+                 force_add_channel: bool = False):
         super().__init__()
         self.image_path = image_path
         self.code_path = code_path
         self.split = split
         self.transform = transform
+        self.force_add_channel = force_add_channel
 
         self.multi_label = multi_label
         assert multi_label in [None, "multi", "multi-invert"]
@@ -246,5 +258,12 @@ class ImageCodeDataset(Dataset):
                     item["prect"] = rect[0]
                 else:
                     item["prect"] = rect
+
+        if self.force_add_channel:
+            if item["image"].size(0) == 3:
+                rect = (0, 0, image.size(1) - 1, image.size(2) - 1)
+                mask = make_mask(rect).unsqueeze(0)
+                item["image"] = torch.cat([item["image"], mask], dim=0)
+
         return item
     
