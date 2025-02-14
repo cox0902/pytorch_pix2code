@@ -139,9 +139,13 @@ class Rnn(nn.Module):
 
 class TreeNode:
     
-    def __init__(self, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
+    def __init__(self, iv: Union[int, torch.Tensor], parent: "TreeNode" = None, device = None):
         self.id = hex(id(self))
         self.iv = torch.tensor(iv) if type(iv) == int else iv.clone()
+        if device is not None:
+            self.iv.to(device)
+        elif self.parent is not None:
+            self.iv.to(self.parent.iv.device)
         self.parent = parent
         self.children: List[TreeNode] = []
         self.left: TreeNode = None
@@ -253,8 +257,8 @@ class TreeNode:
             TreeNode._finalize(n.children[i])
 
     @staticmethod
-    def build_tree(code):
-        root = TreeNode(3)
+    def build_tree(code, device):
+        root = TreeNode(3, device=device)
         node = root
         queue: List[TreeNode] = [node]
         for iv in code:
@@ -375,7 +379,7 @@ class DecoderWithAttention(nn.Module):
 
             alphas_nb = []
 
-            tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]])
+            tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]], device=encoder_out.device)
             prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
 
             # print(len(prd), prd[0].shape)
