@@ -215,44 +215,45 @@ def main(args):
 
     has_comma = (not args.no_comma)
     
-    train_set = ImageCodeDataset(args.image_path, 
-                                 args.code_path, 
-                                 split_train, 
-                                 transform=PresetEval(),
-                                 label_trans=code_lt, 
-                                 multi_label=args.multi_label, 
-                                 label_aug_prob=args.label_aug_prob,
-                                 has_comma=has_comma, 
-                                 has_rect=has_rect, 
-                                 mask_rect=mask_rect)
-    train_set.normalize_rect = norm_rect
-    train_set.summary("> Train set")
-    train_loader = DataLoader(train_set, 
-                              batch_size=args.batch_size, 
-                              shuffle=True, 
-                              pin_memory=args.pin_memory, 
-                              num_workers=args.workers, 
-                              worker_init_fn=seed_worker, 
-                              generator=generator)
-         
-    if split_valid is not None:
-        valid_set = ImageCodeDataset(args.image_path, 
-                                     args.code_path, 
-                                     split_valid, 
-                                     transform=PresetEval(),
-                                     label_trans=code_lt, 
-                                     multi_label=args.multi_label,
-                                     has_comma=has_comma, 
-                                     has_rect=has_rect, 
-                                     mask_rect=mask_rect)
-        valid_set.normalize_rect = norm_rect
-        valid_set.summary("> Valid set")
-        valid_loader = DataLoader(valid_set, 
-                                  batch_size=args.batch_size, 
-                                  shuffle=True, 
-                                  pin_memory=args.pin_memory)
-    else:
-        valid_loader = None
+    if not args.test_only:
+        train_set = ImageCodeDataset(args.image_path, 
+                                    args.code_path, 
+                                    split_train, 
+                                    transform=PresetEval(),
+                                    label_trans=code_lt, 
+                                    multi_label=args.multi_label, 
+                                    label_aug_prob=args.label_aug_prob,
+                                    has_comma=has_comma, 
+                                    has_rect=has_rect, 
+                                    mask_rect=mask_rect)
+        train_set.normalize_rect = norm_rect
+        train_set.summary("> Train set")
+        train_loader = DataLoader(train_set, 
+                                batch_size=args.batch_size, 
+                                shuffle=True, 
+                                pin_memory=args.pin_memory, 
+                                num_workers=args.workers, 
+                                worker_init_fn=seed_worker, 
+                                generator=generator)
+            
+        if split_valid is not None:
+            valid_set = ImageCodeDataset(args.image_path, 
+                                        args.code_path, 
+                                        split_valid, 
+                                        transform=PresetEval(),
+                                        label_trans=code_lt, 
+                                        multi_label=args.multi_label,
+                                        has_comma=has_comma, 
+                                        has_rect=has_rect, 
+                                        mask_rect=mask_rect)
+            valid_set.normalize_rect = norm_rect
+            valid_set.summary("> Valid set")
+            valid_loader = DataLoader(valid_set, 
+                                    batch_size=args.batch_size, 
+                                    shuffle=True, 
+                                    pin_memory=args.pin_memory)
+        else:
+            valid_loader = None
 
     if args.resume is not None:
 
