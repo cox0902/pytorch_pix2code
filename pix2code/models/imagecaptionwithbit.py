@@ -143,6 +143,9 @@ class TreeNode:
         self.id = hex(id(self))
         self.iv = torch.tensor(iv) if type(iv) == int else iv.clone()
         self.iv.to(device)
+
+        print(self.iv, device, self.iv.device)
+
         self.parent = parent
 
         self.children: List[TreeNode] = []
@@ -379,7 +382,7 @@ class DecoderWithAttention(nn.Module):
 
             tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]], device=encoder_out.device)
 
-            tree.preorder_walk(lambda n: print(n.iv.device))
+            # tree.preorder_walk(lambda n: print(n.iv.device))
 
             prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
 
