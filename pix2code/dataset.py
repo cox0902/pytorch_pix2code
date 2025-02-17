@@ -44,7 +44,7 @@ class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
                  label_trans = None, multi_label: str = None, label_aug_prob: float = None,
-                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False,
+                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False, has_tree: bool = False,
                  force_add_channel: bool = False):
         super().__init__()
         self.image_path = image_path
@@ -83,6 +83,8 @@ class ImageCodeDataset(Dataset):
         self.ids = self.hc["ids"] if has_rect else None
         self.pid = self.hc["pid"] if has_rect else None
         self.piv = self.hc["piv"] if has_rect else None
+
+        self.has_tree = has_tree
         
     def summary(self, header: Optional[str] = None):
         print()
@@ -264,6 +266,17 @@ class ImageCodeDataset(Dataset):
                 rect = (0, 0, image.size(1) - 1, image.size(2) - 1)
                 mask = make_mask(rect).unsqueeze(0)
                 item["image"] = torch.cat([item["image"], mask], dim=0)
+
+        if self.has_tree:
+            item["pos_ids"] = self.hc["pos_ids"][code_idx]
+            item["pos_ivs"] = self.hc["pos_ivs"][code_idx]
+            item["pos_ivs_src"] = self.hc["pos_ivs_src"][code_idx]
+            item["pos_ivs_tgt"] = self.hc["pos_ivs_tgt"][code_idx]
+            item["pre_ids"] = self.hc["pre_ids"][code_idx]
+            item["pre_ivs"] = self.hc["pre_ivs"][code_idx]
+            item["pre_ivs_src"] = self.hc["pre_ivs_src"][code_idx]
+            item["pre_ivs_tgt"] = self.hc["pre_ivs_tgt"][code_idx]
+            item["pre_les"] = self.hc["pre_les"][code_idx]
 
         return item
     
