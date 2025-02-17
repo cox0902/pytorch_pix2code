@@ -76,7 +76,7 @@ class Encoder(nn.Module):
         # Pack padded batch of sequences for RNN module
         packed = nn.utils.rnn.pack_padded_sequence(
             embedded_inputs, 
-            input_lengths, 
+            input_lengths.cpu(), 
             batch_first=self.batch_first,
             enforce_sorted=False)
         # Forward pass through RNN
