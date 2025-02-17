@@ -152,7 +152,7 @@ class PointerNet(nn.Module):
             batch_size = input_seq.size(1)
             max_seq_len = input_seq.size(0)
 
-        # print(max_seq_len)
+        print(batch_size)
 
         # Embedding
         embedded = self.embedding(input_seq)
