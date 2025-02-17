@@ -152,7 +152,7 @@ class PointerNet(nn.Module):
             batch_size = input_seq.size(1)
             max_seq_len = input_seq.size(0)
 
-        print(batch_size)
+        # print(batch_size)
 
         # Embedding
         embedded = self.embedding(input_seq)
@@ -173,7 +173,8 @@ class PointerNet(nn.Module):
 
         # Lets use zeros as an intial input for sorting example
         decoder_input = encoder_outputs.new_zeros(torch.Size((batch_size, self.hidden_size)))
-        decoder_hidden = (encoder_h_n[-1, 0, :, :].squeeze(), encoder_c_n[-1, 0, :, :].squeeze())
+        # decoder_hidden = (encoder_h_n[-1, 0, :, :].squeeze(), encoder_c_n[-1, 0, :, :].squeeze())
+        decoder_hidden = (encoder_h_n[-1, 0, :, :], encoder_c_n[-1, 0, :, :])
 
         range_tensor = torch.arange(max_seq_len, device=input_lengths.device, dtype=input_lengths.dtype).expand(batch_size, max_seq_len, max_seq_len)
         each_len_tensor = input_lengths.view(-1, 1, 1).expand(batch_size, max_seq_len, max_seq_len)
