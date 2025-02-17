@@ -33,7 +33,7 @@ class BeamSearch:
         beam_scores[:, 1:] = -1e9
         beam_scores = beam_scores.view(-1)  # (batch_size * beam_width, )
 
-        if init_input is not None:
+        if init_input is None:
             input_ids = torch.full((batch_size * self.beam_width, 1), 3, dtype=torch.long, device=images.device)
         else:
             input_ids = init_input[:, None].repeat_interleave(self.beam_width, dim=0)
