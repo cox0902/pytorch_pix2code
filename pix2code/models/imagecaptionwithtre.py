@@ -211,16 +211,19 @@ class TreeNode:
         else:
             left_iv = n.left.iv
 
-        n.hidden = rnn.forward(left_iv, y, n.parent.hidden[0], n.left.hidden)
+        hidden = rnn.forward(left_iv, y, n.parent.hidden[0], n.left.hidden)
+        
+        # print("=>", vocabs[n.iv])
+        prds.append(fc(hidden[0]))
+        tgts.append(n.iv)
 
         if len(n.children) > 0:
-            tgt_iv = torch.tensor(1).to(n.iv.device)
-        else:
-            tgt_iv = n.iv
+            hidden = rnn.forward(n.iv, y, n.parent.hidden[0], hidden)
 
-        # print("=>", vocabs[n.iv])
-        prds.append(fc(n.hidden[0]))
-        tgts.append(tgt_iv)
+            prds.append(fc(hidden[0]))
+            tgts.append(torch.tensor(1).to(n.iv.device))
+
+        n.hidden = hidden
 
         for each in n.children[1:]:
             TreeNode._train(each, prds, tgts, fc=fc, rnn=rnn, y=y)
