@@ -195,6 +195,7 @@ class TreeNode:
             dot.edge(n.parent.id, n.id)
 
     def visualize(self, vocabs: List[str]) -> "Digraph":
+        from graphviz import Digraph
         dot = Digraph()
         self.preorder_walk(partial(TreeNode._make_graph, vocabs=vocabs, dot=dot))
         return dot

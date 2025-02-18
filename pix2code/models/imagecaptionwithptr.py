@@ -326,37 +326,47 @@ class ImageCaptionWithPtr(nn.Module):
 
         imgs_pre = imgs
         imgs_pos = imgs
-        if self.stop_propagation == "pre":
-            imgs_pre = imgs.detach()
-        elif self.stop_propagation == "pos":
-            imgs_pos = imgs.detach()
-        elif self.stop_propagation == "random":
-            pre_or_pos = np.random.rand()
-            imgs_pre = imgs.detach() if pre_or_pos >= 0.5 else imgs
-            imgs_pos = imgs.detach() if pre_or_pos < 0.5 else imgs
+        
+        if self.training:
+            if self.stop_propagation == "pre":
+                imgs_pre = imgs.detach()
+            elif self.stop_propagation == "pos":
+                imgs_pos = imgs.detach()
+            elif self.stop_propagation == "random":
+                pre_or_pos = np.random.rand()
+                imgs_pre = imgs.detach() if pre_or_pos >= 0.5 else imgs
+                imgs_pos = imgs.detach() if pre_or_pos < 0.5 else imgs
 
         loss_pre, scores_pre, targets_pre = self.forward_decoder(self.decoder_pre, imgs_pre, 
                                                                 batch["pre_ivs_src"],
                                                                 batch["pre_ivs_tgt"],
                                                                 batch["pre_les"])
+        loss = loss_pre
 
-        loss_pos, scores_pos, targets_pos = self.forward_decoder(self.decoder_pos, imgs_pos, 
-                                                                batch["pos_ivs_src"],
-                                                                batch["pos_ivs_tgt"],
-                                                                batch["pre_les"])
+        if self.training:
+            loss_pos, scores_pos, targets_pos = self.forward_decoder(self.decoder_pos, imgs_pos, 
+                                                                    batch["pos_ivs_src"],
+                                                                    batch["pos_ivs_tgt"],
+                                                                    batch["pre_les"])
+            loss += loss_pos
 
-        loss = loss_pre + loss_pos
+            scores = torch.cat([scores_pre, scores_pos], dim=0)
+            targets = torch.cat([targets_pre, targets_pos], dim=0)
 
-        scores = torch.cat([scores_pre, scores_pos], dim=0)
-        targets = torch.cat([targets_pre, targets_pos], dim=0)
-
+            return {
+                "loss": loss, 
+                "loss/pre": loss_pre,
+                "loss/pos": loss_pos,
+                "logits": scores,
+                "scores": torch.nn.functional.softmax(scores, dim=-1), 
+                "targets": targets
+            }
+        
         return {
             "loss": loss, 
-            "loss/pre": loss_pre,
-            "loss/pos": loss_pos,
-            "logits": scores,
-            "scores": torch.nn.functional.softmax(scores, dim=-1), 
-            "targets": targets
+            "logits": scores_pre,
+            "scores": torch.nn.functional.softmax(scores_pre, dim=-1), 
+            "targets": targets_pre
         }
     
     def get_alphas(self, batch):
