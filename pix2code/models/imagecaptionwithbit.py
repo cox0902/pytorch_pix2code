@@ -502,10 +502,10 @@ class ImageCaptionWithBit(nn.Module):
         # Forward prop.
         imgs = self.encoder(imgs)
 
-        if not self.enable_attention_regularization:
-            scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
-        else:
-            scores, targets, alphas = self.decoder(imgs, caps, caplens)
+        # if not self.enable_attention_regularization:
+        scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
+        # else:
+        #     scores, targets, alphas = self.decoder(imgs, caps, caplens)
 
         # print(scores.shape, targets.shape)
         # print(alphas.shape)
@@ -521,9 +521,9 @@ class ImageCaptionWithBit(nn.Module):
         # Calculate loss
         loss = self.criterion(scores, targets)
 
-        if self.enable_attention_regularization:
-            # Add doubly stochastic attention regularization
-            loss += self.alpha_c * ((1. - alphas) ** 2).mean()
+        # if self.enable_attention_regularization:
+        #     # Add doubly stochastic attention regularization
+        #     loss += self.alpha_c * ((1. - alphas) ** 2).mean()
 
         return {
             "loss": loss, 
