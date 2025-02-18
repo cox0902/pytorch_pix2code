@@ -34,8 +34,17 @@ class ExponentialMovingAverage(AveragedModel):
 
     decay: float = 0.999
 
-    def __init__(self, model):
-        super().__init__(model, multi_avg_fn=self.ema_update, use_buffers=True)
+    def __init__(self, model, device=None):
+        if "clone" in model.__dict__:
+            self.module = model.clone()
+            if device is not None:
+                self.module = self.module.to(device)
+            self.register_buffer('n_averaged', torch.tensor(0, dtype=torch.long, device=device))
+            self.avg_fn = None
+            self.multi_avg_fn = self.ema_update
+            self.use_buffers = True
+        else:
+            super().__init__(model, multi_avg_fn=self.ema_update, use_buffers=True)
 
     @staticmethod
     def ema_update(ema_param_list, current_param_list, _):

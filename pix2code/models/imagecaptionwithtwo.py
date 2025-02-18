@@ -350,7 +350,10 @@ class DecoderWithAttention(nn.Module):
 
 class ImageCaptionWithTwo(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, max_len):
+    def __init__(self, 
+                 resnet, 
+                 vocab_size: int, 
+                 max_len):
         super().__init__()
         self.proof_of_concept: bool = False
         self.vocab_size = vocab_size

@@ -210,6 +210,8 @@ class DecoderWithAttention(nn.Module):
         # Initialize LSTM state
         h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
 
+        print(h.shape)
+
         # We won't decode at the <end> position, since we've finished generating as soon as we generate <end>
         # So, decoding lengths are actual lengths - 1
         decode_lengths = (caption_lengths - 1).tolist()
@@ -218,6 +220,7 @@ class DecoderWithAttention(nn.Module):
         predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
         # alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
         alphas = torch.zeros(batch_size, num_pixels).to(encoder_out.device)
+        hiddens = torch.zeros(batch_size, max(decode_lengths), h.size(1)).to(encoder_out.device)
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -234,8 +237,9 @@ class DecoderWithAttention(nn.Module):
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
             predictions[:batch_size_t, t, :] = preds
             alphas[:batch_size_t, :] += alpha
+            hiddens[:batch_size_t, t, :] = h
 
-        return predictions, encoded_captions, decode_lengths, alphas, sort_ind
+        return predictions, encoded_captions, decode_lengths, alphas, sort_ind, hiddens
     
     def predict(self, encoder_out, captions, hiddens = None):
         # Embedding
@@ -308,7 +312,7 @@ class ImageCaptionWithPtr(nn.Module):
         caps_src = ivs_src.long()
         caps_tgt = ivs_tgt.long()
         caplens = ivs_les + 2
-        scores, _, decode_lengths, alphas, sort_ind = decoder(imgs, caps_src, caplens)
+        scores, _, decode_lengths, alphas, sort_ind, _ = decoder(imgs, caps_src, caplens)
         caps_tgt = caps_tgt[sort_ind]
 
         scores = nn.utils.rnn.pack_padded_sequence(scores, decode_lengths, batch_first=True).data

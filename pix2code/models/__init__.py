@@ -34,6 +34,9 @@ def get_model_class_by_name(name):
         return ImageCaptionWithPtr
     elif name == "vit2code":
         return Vit2Code
+    elif name == "Rag2Code".lower():
+        from .rag2code import Rag2Code
+        return Rag2Code
     else:
         return None
 

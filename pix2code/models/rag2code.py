@@ -1,9 +1,9 @@
+import faiss
 import math
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import TransformerDecoderLayer
 import torchvision
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
@@ -169,7 +169,7 @@ class Decoder(nn.Module):
 
     def __init__(self, dim, num_head, num_layers, norm=None):
         super().__init__()
-        decoder_layer = TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
         torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for i in range(num_layers)])
         self.num_layers = num_layers
@@ -193,12 +193,36 @@ class Decoder(nn.Module):
         return output
     
 
+def retrieve_fn(query, index_path, code_path, top_most: bool = False):
+    index = faiss.read_index(index_path)
+    _, I = index.search(query, k=1 if top_most else 2)
+    if top_most:
+        return I[:, 1]
+    return I[:, 0]
+
+
 class Rag2Code(nn.Module):
-    def __init__(self, image_size=256, patch_size=16, dim=512, num_layer=6,
-                 num_head=8, num_classes=90, mlp_dim=1024, dropout=0.1, emb_dropout=0.1):
+
+    def __init__(self, 
+                 vocab_size, 
+                 max_len,
+                 retrieve_fn,
+                 image_size=256, 
+                 patch_size=16, 
+                 dim=512, 
+                 num_layer=6,
+                 num_head=8, 
+                 mlp_dim=1024, 
+                 dropout=0.1, 
+                 emb_dropout=0.1,
+                 proof_of_concept: bool = False):
         super().__init__()
 
-        self.encoder = ViT(
+        self.proof_of_concept = proof_of_concept
+
+        self.retrieve_fn = retrieve_fn  # Retriever(retriever_index_path, retriever_database)
+
+        self.img_encoder = ViT(
             image_size = image_size,
             patch_size = patch_size,
             dim = dim,
@@ -210,14 +234,21 @@ class Rag2Code(nn.Module):
         )
         # self.encoder = torchvision.models.vit_b_16()
 
-        self.decoder = Decoder(
-            dim = dim, 
-            num_head = num_head, 
-            num_layers = num_layer
-        )
-        self.tok_emb = TokenEmbedding(num_classes, dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
+        self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
+
+        # self.decoder = Decoder(
+        #     dim = dim, 
+        #     num_head = num_head, 
+        #     num_layers = num_layer
+        # )
+
+        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first=True)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layer)
+
+        self.tok_emb = TokenEmbedding(vocab_size, dim)
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
-        self.generator = nn.Linear(dim, num_classes)
+        self.generator = nn.Linear(dim, vocab_size)
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
     
@@ -230,8 +261,14 @@ class Rag2Code(nn.Module):
 
         cap_mask, cap_padding_mask = create_mask(tgt_input)
 
-        memory = self.encoder(img)
+        memory = self.img_encoder(img)
         # print(memory.shape)  # (batch_size, 257, 512)
+
+        ret_memory = rearrange(memory, "b s d -> (b s) d").detach().numpy()
+
+        result = self.retrieve_fn(ret_memory)
+        print(result)
+
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
                             tgt_key_padding_mask = cap_padding_mask)
@@ -252,7 +289,7 @@ class Rag2Code(nn.Module):
         }
     
     def encode(self, img):
-        return self.encoder(img)
+        return self.img_encoder(img)
 
     def decode(self, caption, memory, cap_mask):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,

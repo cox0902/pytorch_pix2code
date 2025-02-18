@@ -49,6 +49,11 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--logit-adjustment-train", type=str)
     parser.add_argument("--logit-adjustment-valid", type=str)
 
+    parser.add_argument("--retriever-index-path", type=str)
+    parser.add_argument("--retriever-image-path", type=str)
+    parser.add_argument("--retriever-code-path", type=str)
+    parser.add_argument("--retriever-split-path", type=str)
+
     parser.add_argument("--image-path", type=str)
     parser.add_argument("--split-path", type=str)
     parser.add_argument("--code-path", type=str)
@@ -175,6 +180,22 @@ def build_model(args, data_set):
     
     if args.code_lt_path is not None:
         model_params["max_len_lt"] = data_set.max_len_lt
+
+    if args.retriever_index_path is not None:
+        # split = None
+        # if args.retriever_split_path is not None:
+        #     split = np.load(args.retriever_split_path)["train"]
+        # import faiss
+        from pix2code.models.rag2code import retrieve_fn
+
+        # index = faiss.read_index(args.retriever_index_path)
+        # database = ImageCodeDataset(args.retriever_image_path,
+        #                             args.retriever_code_path,
+        #                             split)
+
+        model_params["retrieve_fn"] = partial(retrieve_fn, 
+                                              index_path=args.retriever_index_path, 
+                                              code_path=args.retriever_code_path)
 
     if "generator" in model_params:
         if model_params["generator"].startswith("beam"):

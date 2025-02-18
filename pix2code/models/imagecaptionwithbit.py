@@ -133,7 +133,11 @@ class Rnn(nn.Module):
     
     def forward(self, x, y, hidden):
         x_emb = self.embedding(x)
-        y_hat, _ = self.attention(y, hidden[0])
+        if self.attention is not None:
+            y_hat, _ = self.attention(y, hidden[0])
+        else:
+            y_hat = y
+        # print(y_hat.shape, x_emb.shape)
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden)
 
 
@@ -152,6 +156,7 @@ class TreeNode:
         self.right: TreeNode = None
         self.hidden_v = None
         self.hidden_h = None
+        self.height = 1 if parent is None else parent.height + 1
 
     def add_child(self, device, iv) -> "TreeNode":
         node = TreeNode(device, iv, self)
@@ -169,16 +174,16 @@ class TreeNode:
 
     @staticmethod
     def _build_list(n: "TreeNode", ivs: List):
-        ivs.append(n.iv)
-        if len(n.children) > 0:
+        ivs.append(n.iv.item())
+        if len(n.children) > 2:
             ivs.append(5)  # [LB]
-            for each in n.children:
+            for each in n.children[1:-1]:
                 TreeNode._build_list(each, ivs)
             ivs.append(6)  # [RB]
             
     def build_list(self) -> List[int]:
         ivs = [3]  # [START]
-        for each in self.children:
+        for each in self.children[1:-1]:
             TreeNode._build_list(each, ivs)
         ivs.append(4)  # [END]
         return ivs
@@ -303,7 +308,7 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
-                 encoder_dim=2048, dropout=0.5, pos_embed=None):
+                 encoder_dim=2048, dropout=0.5, pos_embed=None, disable_attention=False):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -320,8 +325,12 @@ class DecoderWithAttention(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
         self.dropout = dropout
+        self.disable_attention = disable_attention
 
-        self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
+        if not self.disable_attention:
+            self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
+        else:
+            self.attention = None
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
 
@@ -399,39 +408,50 @@ class DecoderWithAttention(nn.Module):
             return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
         return torch.cat(predict, dim=0), torch.stack(targets)
     
-    def predict(self, encoder_out, captions, hiddens = None):
-        # Embedding
-        # print(captions.shape)
-        embeddings = self.embedding(captions)  # (batch_size, embed_dim)
-        # print(embeddings.shape)
+    def predict(self, encoder_out, max_v_len, max_h_len, verbose=False):
+        if verbose:
+            from tqdm.notebook import tqdm
 
-        # Initialize LSTM state
-        if hiddens is None:
-            h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+        device = encoder_out.device
 
-            decode_length = captions.size(-1)
+        root = TreeNode(device, 3)
+        root.hidden_v = self.rnn_v.init_hidden_state(encoder_out)
+        init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
 
-            for t in range(decode_length):
-                attention_weighted_encoding, alpha = self.attention(encoder_out, h)
-                gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
-                attention_weighted_encoding = gate * attention_weighted_encoding
-                h, c = self.decode_step(
-                    torch.cat([embeddings, attention_weighted_encoding], dim=1),
-                    (h, c))  # (batch_size_t, decoder_dim)
-                preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
-        else:
-            h, c = hiddens
-            # print("h, c:", h.shape, c.shape)
+        queue = [root]
+        while len(queue) != 0:
+            parent_node = queue.pop()
+            if parent_node.height >= max_v_len - 2:
+                print("max height exceed!")
+                break
 
-            attention_weighted_encoding, alpha = self.attention(encoder_out, h)
-            gate = self.sigmoid(self.f_beta(h))  # gating scalar, (batch_size_t, encoder_dim)
-            attention_weighted_encoding = gate * attention_weighted_encoding
-            h, c = self.decode_step(
-                torch.cat([embeddings, attention_weighted_encoding], dim=1),
-                (h, c))  # (batch_size_t, decoder_dim)
-            preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
+            left_node = parent_node.add_child(device, 3)
+            left_node.hidden_h = init_hidden_h
 
-        return preds, alpha, (h, c)
+            hidden_v = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
+
+            tbar = range(max_h_len - 2)
+            if verbose:
+                tbar = tqdm(tbar)
+            for i in tbar:
+                if verbose:
+                    tbar.set_description(f"@{parent_node.height}")
+                hidden_h = self.rnn_h.forward(left_node.iv, encoder_out, left_node.hidden_h)
+                logit = self.fc(hidden_h[0], hidden_v[0])
+                iv = torch.argmax(nn.functional.softmax(logit, dim=-1), dim=-1)[0]
+                if iv == 0:
+                    iv = 4
+                node = parent_node.add_child(device, iv)
+                if iv == 4:
+                    break
+                node.hidden_v = hidden_v
+                node.hidden_h = hidden_h
+                queue.append(node)
+                left_node = node
+            else:
+                print("max width exceed!")
+
+        return root
 
 
 class ImageCaptionWithBit(nn.Module):
@@ -439,10 +459,29 @@ class ImageCaptionWithBit(nn.Module):
     Image captioning with bi-directional tree rnn.
     """
 
-    def __init__(self, resnet, vocab_size: int, max_len,                  
+    def __init__(self, 
+                 resnet, 
+                 vocab_size: int, 
+                 max_len,                  
+                 disable_attention = None,
+                 enable_topo_predict = None,
+                #  enable_attention_regularization = None,
                  proof_of_concept: bool = False):
         super().__init__()
         self.proof_of_concept: bool = proof_of_concept
+        self.disable_attention = (disable_attention == '1')
+        self.enable_topo_predict = (enable_topo_predict == '1')
+        # self.enable_attention_regularization = (enable_attention_regularization == '1')
+
+        print("[params] {}".format(", ".join([
+            f"{k}={v}" for k, v in {
+                "proof_of_concept": self.proof_of_concept,
+                "disable_attention": self.disable_attention,
+                "enable_topo_predict": self.enable_topo_predict,
+                # "enable_attention_regularization": self.enable_attention_regularization
+            }.items()
+        ])))
+
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
@@ -451,7 +490,8 @@ class ImageCaptionWithBit(nn.Module):
                                             embed_dim=512,
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
-                                            dropout=0.2)
+                                            dropout=0.2,
+                                            disable_attention=self.disable_attention)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
@@ -461,8 +501,11 @@ class ImageCaptionWithBit(nn.Module):
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
-        # scores, targets, alphas = self.decoder(imgs, caps, caplens)
+
+        if not self.enable_attention_regularization:
+            scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
+        else:
+            scores, targets, alphas = self.decoder(imgs, caps, caplens)
 
         # print(scores.shape, targets.shape)
         # print(alphas.shape)
@@ -478,8 +521,9 @@ class ImageCaptionWithBit(nn.Module):
         # Calculate loss
         loss = self.criterion(scores, targets)
 
-        # Add doubly stochastic attention regularization
-        # loss += self.alpha_c * ((1. - alphas) ** 2).mean()
+        if self.enable_attention_regularization:
+            # Add doubly stochastic attention regularization
+            loss += self.alpha_c * ((1. - alphas) ** 2).mean()
 
         return {
             "loss": loss, 
@@ -500,7 +544,7 @@ class ImageCaptionWithBit(nn.Module):
     #         "hiddens": hiddens
     #     }
 
-    def predict_init(self, images):
+    def predict(self, images, max_v_len, max_h_len, verbose=False):
         batch_size = images.size(0)
         
         # with torch.no_grad() should be called outside this scope.
@@ -508,21 +552,14 @@ class ImageCaptionWithBit(nn.Module):
         encoder_dim = encoder_out.size(-1)
         encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
 
-        h, c = self.decoder.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
-        
-        return {
-            "encoder_out": encoder_out,
-            "h": h,
-            "c": c,
-        }
+        trees = []
 
-    def predict_next(self, inputs, contexts):
-        
-        # with torch.no_grad() should be called outside this scope.
-        scores, _, (h, c) = self.decoder.predict(contexts["encoder_out"], inputs, (contexts["h"], contexts["c"]))
-        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
-        
-        return predicts, scores, {
-            "h": h,
-            "c": c,
-        }
+        for i in range(batch_size):
+            if verbose:
+                print(f"Sample {i} =>")
+            tree = self.decoder.predict(encoder_out[i, :, :].unsqueeze(0), 
+                                        max_v_len, max_h_len, verbose=verbose)  # (batch_size, decoder_dim)
+            trees.append(tree)
+
+        return trees
+
