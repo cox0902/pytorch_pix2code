@@ -1,10 +1,8 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision
 import transformers
-from .networks import PointerNet
 
 
 class Encoder(nn.Module):
@@ -273,24 +271,19 @@ class DecoderWithAttention(nn.Module):
         return preds, alpha, (h, c)
 
 
-
-def masked_accuracy(output, target, mask):
-	"""Computes a batch accuracy with a mask (for padded sequences) """
-	with torch.no_grad():
-		masked_output = torch.masked_select(output, mask)
-		masked_target = torch.masked_select(target, mask)
-		accuracy = masked_output.eq(masked_target).float().mean()
-
-		return accuracy
-    
-
 class ImageCaptionWithPtr(nn.Module):
 
-    def __init__(self, resnet, vocab_size: int, max_len, pos_embed: str = None, proof_of_concept: bool = False):
+    def __init__(self, resnet, vocab_size: int, max_len, 
+                 pos_embed: str = None, 
+                 stop_propagation = None,
+                 proof_of_concept: bool = False):
         super().__init__()
         print(f"[params] pos_embed={pos_embed}")
        
         self.proof_of_concept: bool = proof_of_concept
+        self.stop_propagation = stop_propagation
+        assert self.stop_propagation in [None, "pre", "pos", "random"]
+
         self.vocab_size = vocab_size
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
@@ -309,7 +302,6 @@ class ImageCaptionWithPtr(nn.Module):
                                                 dropout=0.5,
                                                 pos_embed=pos_embed)
         self.criterion = nn.CrossEntropyLoss()
-        self.pn = PointerNet(90, 512, 512)
         
     def forward_decoder(self, decoder, imgs, ivs_src, ivs_tgt, ivs_les):
         caps_src = ivs_src.long()
@@ -329,15 +321,26 @@ class ImageCaptionWithPtr(nn.Module):
     def forward(self, batch):
         # Forward prop.
         
-        imgs = batch["image"]
+        imgs: torch.Tensor = batch["image"]
         imgs = self.encoder(imgs)
 
-        loss_pre, scores_pre, targets_pre = self.forward_decoder(self.decoder_pre, imgs, 
+        imgs_pre = imgs
+        imgs_pos = imgs
+        if self.stop_propagation == "pre":
+            imgs_pre = imgs.detach()
+        elif self.stop_propagation == "pos":
+            imgs_pos = imgs.detach()
+        elif self.stop_propagation == "random":
+            pre_or_pos = np.random.rand()
+            imgs_pre = imgs.detach() if pre_or_pos >= 0.5 else imgs
+            imgs_pos = imgs.detach() if pre_or_pos < 0.5 else imgs
+
+        loss_pre, scores_pre, targets_pre = self.forward_decoder(self.decoder_pre, imgs_pre, 
                                                                 batch["pre_ivs_src"],
                                                                 batch["pre_ivs_tgt"],
                                                                 batch["pre_les"])
 
-        loss_pos, scores_pos, targets_pos = self.forward_decoder(self.decoder_pos, imgs, 
+        loss_pos, scores_pos, targets_pos = self.forward_decoder(self.decoder_pos, imgs_pos, 
                                                                 batch["pos_ivs_src"],
                                                                 batch["pos_ivs_tgt"],
                                                                 batch["pre_les"])
@@ -347,32 +350,10 @@ class ImageCaptionWithPtr(nn.Module):
         scores = torch.cat([scores_pre, scores_pos], dim=0)
         targets = torch.cat([targets_pre, targets_pos], dim=0)
 
-        log_pointer_score, argmax_pointer, mask = self.pn(batch["pre_ivs"], batch["pre_les"])
-        unrolled = log_pointer_score.view(-1, log_pointer_score.size(-1))
-        loss_pn_pre = F.nll_loss(unrolled, batch["pre_ids"].long().view(-1), ignore_index=-1)
-
-        mask = mask[:, 0, :]
-        acc_pre = masked_accuracy(argmax_pointer, batch["pre_ids"], mask).item(), mask.int().sum().item()
-
-        log_pointer_score, argmax_pointer, mask = self.pn(batch["pos_ivs"], batch["pre_les"])
-        unrolled = log_pointer_score.view(-1, log_pointer_score.size(-1))
-        loss_pn_pos = F.nll_loss(unrolled, batch["pos_ids"].long().view(-1), ignore_index=-1)
-
-        mask = mask[:, 0, :]
-        acc_pos = masked_accuracy(argmax_pointer, batch["pos_ids"], mask).item(), mask.int().sum().item()
-
-        assert not np.isnan(loss.item()), 'Model diverged with loss = NaN'
-
-        loss += loss_pn_pre + loss_pn_pos
-
         return {
             "loss": loss, 
             "loss/pre": loss_pre,
             "loss/pos": loss_pos,
-            "loss/pre/pn": loss_pn_pre,
-            "loss/pos/pn": loss_pn_pos,
-            "loss/pre/acc": acc_pre[0],
-            "loss/pos/acc": acc_pos[0],
             "logits": scores,
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets

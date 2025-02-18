@@ -263,6 +263,8 @@ class Trainer:
                     self.grad_clip_fn(self.model.parameters(), self.grad_clip)
 
                 self.optimizer.step()
+
+            assert not np.isnan(outputs["loss"].item()), 'Model diverged with loss = NaN'
             
             if self.ema_model is not None:
                 self.ema_model.update_parameters(self.model)
