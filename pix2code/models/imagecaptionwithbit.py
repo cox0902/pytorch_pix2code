@@ -136,7 +136,7 @@ class Rnn(nn.Module):
         if self.attention is not None:
             y_hat, _ = self.attention(y, hidden[0])
         else:
-            y_hat = y
+            y_hat = y.sum(dim=1)
         # print(y_hat.shape, x_emb.shape)
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden)
 
