@@ -133,11 +133,11 @@ class Metrics:
                show_batch_time: bool = True, show_loss: bool = True) -> str:
         agg_metrics = []
         if torch.cuda.is_available():
-            MB = 1024.0 * 1024.0
+            GB = 1024.0 * 1024.0 * 1024.0
             ma, mr = torch.cuda.mem_get_info()
             # ma = torch.cuda.max_memory_allocated()
             # mr = torch.cuda.max_memory_reserved()
-            agg_metrics.append(f"{int(ma / MB)} MB / {int(mr / MB)} MB")
+            agg_metrics.append(f"FREE {ma / GB:.2f} / {mr / GB:.2f} GB")
         if show_batch_time:
             str_inline = f"ETA {_tf(self.batch_time.sum)}"
             if self.batch_count > 0 and self.batch_count > self.batch_time.count:

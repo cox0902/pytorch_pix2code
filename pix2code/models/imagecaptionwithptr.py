@@ -216,7 +216,8 @@ class DecoderWithAttention(nn.Module):
 
         # Create tensors to hold word predicion scores and alphas
         predictions = torch.zeros(batch_size, max(decode_lengths), vocab_size).to(encoder_out.device)
-        alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
+        # alphas = torch.zeros(batch_size, max(decode_lengths), num_pixels).to(encoder_out.device)
+        alphas = torch.zeros(batch_size, num_pixels).to(encoder_out.device)
 
         # At each time-step, decode by
         # attention-weighing the encoder's output based on the decoder's previous hidden state output
@@ -232,7 +233,7 @@ class DecoderWithAttention(nn.Module):
                 (h[:batch_size_t], c[:batch_size_t]))  # (batch_size_t, decoder_dim)
             preds = self.fc(self.dropout(h))  # (batch_size_t, vocab_size)
             predictions[:batch_size_t, t, :] = preds
-            alphas[:batch_size_t, t, :] = alpha
+            alphas[:batch_size_t, :] += alpha
 
         return predictions, encoded_captions, decode_lengths, alphas, sort_ind
     
@@ -314,7 +315,7 @@ class ImageCaptionWithPtr(nn.Module):
         targets = nn.utils.rnn.pack_padded_sequence(caps_tgt, decode_lengths, batch_first=True).data
 
         loss = self.criterion(scores, targets)
-        loss += self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+        loss += self.alpha_c * ((1. - alphas) ** 2).mean()
 
         return loss, scores, targets
 
