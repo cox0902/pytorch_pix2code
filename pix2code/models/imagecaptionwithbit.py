@@ -151,12 +151,13 @@ class Rnn(nn.Module):
     
     def forward(self, x, y, hidden):
         x_emb = self.embedding(x)
-        # if self.attention is not None:
-        y_hat, _ = self.attention(y, hidden[0])
-        # else:
-        #     y_hat = y.sum(dim=1)
+        if self.attention is not None:
+            y_hat, alpha = self.attention(y, hidden[0])
+        else:
+            y_hat = y.sum(dim=1)
+            alpha = None
         # print(y_hat.shape, x_emb.shape)
-        return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden)
+        return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden), alpha
 
 
 class TreeNode:
@@ -234,14 +235,20 @@ class TreeNode:
     
     @staticmethod
     def _train(n: "TreeNode", prds: List, tgts: List, fc: "Fusing", rnn_h: Rnn, rnn_v: Rnn, y, 
-               topos: Optional[List] = None):
+               topos: Optional[List] = None,
+               alphas_h: Optional[List] = None,
+               alphas_v: Optional[List] = None):
         # print("=" * 100)
         if n.left.iv != 3:
             n.hidden_v = n.left.hidden_v
             # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
         else:
-            n.hidden_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
-        n.hidden_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
+            n.hidden_v, alpha_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+            if alphas_v is not None:
+                alphas_v.append(alpha_v)
+        n.hidden_h, alpha_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
+        if alphas_h is not None:
+            alphas_h.append(alpha_h)
 
         # print("=>", vocabs[n.iv])
         if topos is not None:
@@ -256,7 +263,8 @@ class TreeNode:
 
         children = n.children[1:-1] if topos is not None else n.children[1:]
         for each in children:
-            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, topos=topos)
+            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, 
+                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v)
 
         # if n.right.iv == 4:
         #     print("=" * 100)
@@ -269,10 +277,9 @@ class TreeNode:
         if n.iv == 3:
             n.hidden_h = hidden_h
     
-    def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
-
-        prds, tgts = [], []
-        topos = [] if has_topo else None
+    def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, prds: List, tgts: List, 
+              topos: Optional[List] = None, alphas_h: Optional[List] = None, alphas_v: Optional[List] = None
+              ):
 
         # self.hidden_h = rnn_h.init_hidden_state()
         # self.hidden_v = rnn_v.forward(self.iv, rnn_v.init_hidden_state())
@@ -286,12 +293,9 @@ class TreeNode:
     
         children = self.children[1:-1] if topos is not None else self.children[1:]
         for each in children:
-            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, topos=topos)
+            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, 
+                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v)
         # self.preorder_walk_children(partial(TreeNode._train, rnn_h=rnn_h, rnn_v=rnn_v))
-        if has_topo:
-            return prds, tgts, topos
-        else:
-            return prds, tgts
     
     @staticmethod
     def _update_score(n: "TreeNode", fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
@@ -300,8 +304,8 @@ class TreeNode:
             n.hidden_v = n.left.hidden_v
             # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
         else:
-            n.hidden_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
-        n.hidden_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
+            n.hidden_v, _ = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+        n.hidden_h, _ = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
 
         # print("=>", vocabs[n.iv])
         if has_topo:
@@ -310,7 +314,7 @@ class TreeNode:
             logit = fc(n.hidden_h[0], n.hidden_v[0])
         n.score = nn.functional.log_softmax(logit, dim=-1)[0, n.iv]
 
-        children = n.children[1:-1] if has_topo is not None else n.children[1:]
+        children = n.children[1:-1] if has_topo else n.children[1:]
         for each in children:
             TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, has_topo=has_topo)
 
@@ -319,7 +323,7 @@ class TreeNode:
         hidden_h = rnn_h.init_hidden_state(y)
         self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
 
-        children = self.children[1:-1] if has_topo is not None else self.children[1:]
+        children = self.children[1:-1] if has_topo else self.children[1:]
         for each in children:
             TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, has_topo=has_topo)
 
@@ -394,7 +398,7 @@ class Fusing(nn.Module):
     
     def init_weights(self):
         layers = [self.fc]
-        if self.enable_topo_predict:
+        if "enable_topo_predict" in self.__dict__ and self.enable_topo_predict:
             layers.extend([self.proj_h, self.proj_v])
         for layer in layers:
             layer.bias.data.fill_(0)
@@ -404,7 +408,7 @@ class Fusing(nn.Module):
         cat = torch.cat([h, v], dim=1)
         out = self.fc(self.dropout(cat))
 
-        if self.enable_topo_predict:
+        if "enable_topo_predict" in self.__dict__ and self.enable_topo_predict:
             p_h = nn.functional.sigmoid(self.proj_h(h))
             p_v = nn.functional.sigmoid(self.proj_v(v))
             out += p_h * self.offset_h + p_v * self.offset_v
@@ -515,35 +519,46 @@ class DecoderWithAttention(nn.Module):
         for bi in range(batch_size):
             # print(bi)
 
-            alphas_nb = []
+            alphas_nb_h, alphas_nb_v = None, None
+            if return_alphas:
+                alphas_nb_h = []
+                if self.double_attention:
+                    alphas_nb_v = alphas_nb_h
+                else:
+                    alphas_nb_v = []
 
             tree = TreeNode.build_tree(encoded_captions[bi, :caption_lengths[bi]], device=encoder_out.device)
 
             # tree.preorder_walk(lambda n: print(n.iv.device))
 
+            prd, tgt = [], []
+            topo = None
             if self.enable_topo_predict:
-                prd, tgt, topo = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None], has_topo=True)
+                topo = []
+            
+            tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None], 
+                       prds=prd, tgts=tgt, topos=topo, 
+                       alphas_h=alphas_nb_h, alphas_v=alphas_nb_v)
+
+            if topo is not None:          
                 topos.extend(topo)
-            else:
-                prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
-
-            # print(len(prd), prd[0].shape)
-            # print(tgt)
-
             predict.extend(prd)
             targets.extend(tgt)
 
             if return_alphas:
-                alphas.append(torch.stack(alphas_nb).sum(dim=0).squeeze())
+                alphas.append(torch.stack(alphas_nb_h).sum(dim=0).squeeze())
+                if self.double_attention:
+                    alphas.append(torch.stack(alphas_nb_v).sum(dim=0).squeeze())
 
+        r = {
+            "predict": torch.cat(predict, dim=0),  # torch.stack(predict),
+            "targets": torch.stack(targets),
+        }
+        if return_alphas:
+            r["alphas"] = torch.stack(alphas)
         if self.enable_topo_predict:
-            if return_alphas:
-                return torch.stack(predict), torch.stack(targets), torch.stack(alphas), torch.stack(topos)
-            return torch.cat(predict, dim=0), torch.stack(targets), torch.stack(topos)
-        else:
-            if return_alphas:
-                return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
-            return torch.cat(predict, dim=0), torch.stack(targets)
+            r["topos"] = torch.stack(topos)
+        return r
     
     def predict(self, encoder_out, max_v_len, max_h_len, verbose=False):
         if verbose:
@@ -565,19 +580,22 @@ class DecoderWithAttention(nn.Module):
             left_node = parent_node.add_child(device, 3)
             left_node.hidden_h = init_hidden_h
 
-            hidden_v = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
+            hidden_v, _ = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
 
-            tbar = range(max_h_len - 2)
+            tbar = range(max_h_len - 1)
             if verbose:
                 tbar = tqdm(tbar)
             for i in tbar:
                 if verbose:
-                    tbar.set_description(f"@{parent_node.height}")
-                hidden_h = self.rnn_h.forward(left_node.iv, encoder_out, left_node.hidden_h)
+                    tbar.set_description(f"@{parent_node.id}")
+                hidden_h, _ = self.rnn_h.forward(left_node.iv, encoder_out, left_node.hidden_h)
                 logit = self.fc(hidden_h[0], hidden_v[0])
                 iv = torch.argmax(nn.functional.softmax(logit, dim=-1), dim=-1)[0]
                 if iv == 0:
                     iv = 4
+                if i == max_h_len - 2:
+                    iv = 4
+                    print("max width exceed!")
                 node = parent_node.add_child(device, iv)
                 node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
                 if iv == 4:
@@ -586,14 +604,18 @@ class DecoderWithAttention(nn.Module):
                 node.hidden_h = hidden_h
                 queue.append(node)
                 left_node = node
-            else:
-                print("max width exceed!")
+
+                if verbose:
+                    print(f"{i:3}", f"{node.iv}", f"{len(parent_node.children)}", root.build_list())
+            # else:
+                # print("max width exceed!")
 
         root.cumulate_score()
         return root
     
     def predict_score(self, encoder_out, tree: "TreeNode", verbose=False):
-        tree.update_score(self.fc, self.rnn_h, self.rnn_v, encoder_out)
+        enable_topo_predict = ("enable_topo_predict" in self.__dict__ and self.enable_topo_predict)
+        tree.update_score(self.fc, self.rnn_h, self.rnn_v, encoder_out, enable_topo_predict)
         tree.cumulate_score()
 
 
@@ -608,7 +630,7 @@ class ImageCaptionWithBit(nn.Module):
                  max_len,                  
                  disable_attention = None,
                  enable_topo_predict = None,
-                 #  enable_attention_regularization = None,
+                 enable_attention_regularization = None,
                  double_attention = None,
                  proof_of_concept: bool = False):
         super().__init__()
@@ -616,7 +638,7 @@ class ImageCaptionWithBit(nn.Module):
         self.disable_attention = disable_attention
         self.enable_topo_predict = (enable_topo_predict == '1')
         self.double_attention = (double_attention == '1')
-        # self.enable_attention_regularization = (enable_attention_regularization == '1')
+        self.enable_attention_regularization = (enable_attention_regularization == '1')
 
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
@@ -624,7 +646,7 @@ class ImageCaptionWithBit(nn.Module):
                 "disable_attention": self.disable_attention,
                 "enable_topo_predict": self.enable_topo_predict,
                 "double_attention": self.double_attention,
-                # "enable_attention_regularization": self.enable_attention_regularization
+                "enable_attention_regularization": self.enable_attention_regularization
             }.items()
         ])))
 
@@ -651,11 +673,9 @@ class ImageCaptionWithBit(nn.Module):
         # Forward prop.
         imgs = self.encoder(imgs)
 
-        # if not self.enable_attention_regularization:
-        if self.enable_topo_predict:
-            scores, targets, topos = self.decoder(imgs, caps, caplens, return_alphas=False)
-        else:
-            scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
+        outs = self.decoder(imgs, caps, caplens, return_alphas=self.enable_attention_regularization)
+        scores = outs["predict"]
+        targets = outs["targets"]
         # else:
         #     scores, targets, alphas = self.decoder(imgs, caps, caplens)
 
@@ -680,6 +700,7 @@ class ImageCaptionWithBit(nn.Module):
         }
 
         if self.enable_topo_predict:
+            topos = outs["topos"]
             p_h, t_h, p_v, t_v = topos.chunk(4, dim=-1)
             p = torch.cat([p_h, p_v], dim=0).squeeze(0)
             t = torch.cat([t_h, t_v], dim=0).squeeze(0)
@@ -688,9 +709,12 @@ class ImageCaptionWithBit(nn.Module):
             loss += loss_topo
             r["loss/topo"] = loss_topo
 
-        # if self.enable_attention_regularization:
-        #     # Add doubly stochastic attention regularization
-        #     loss += self.alpha_c * ((1. - alphas) ** 2).mean()
+        if self.enable_attention_regularization:
+            alphas = outs["alphas"]
+            # Add doubly stochastic attention regularization
+            loss_reg = self.alpha_c * ((1. - alphas) ** 2).mean()
+            loss += loss_reg
+            r["loss/reg"] = loss_reg
 
         return r
     
