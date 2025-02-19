@@ -308,7 +308,9 @@ class DecoderWithAttention(nn.Module):
     """
 
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
-                 encoder_dim=2048, dropout=0.5, pos_embed=None, disable_attention=False):
+                 encoder_dim=2048, dropout=0.5, pos_embed=None, 
+                 double_attention=False,
+                 disable_attention=False):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -326,9 +328,14 @@ class DecoderWithAttention(nn.Module):
         self.vocab_size = vocab_size
         self.dropout = dropout
         self.disable_attention = disable_attention
+        self.double_attention = double_attention
 
         if not self.disable_attention:
-            self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
+            if not self.double_attention:
+                self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
+            else:
+                self.attention_v = Attention(encoder_dim, decoder_dim, attention_dim)
+                self.attention_h = Attention(encoder_dim, decoder_dim, attention_dim)
         else:
             self.attention = None
 
@@ -339,8 +346,12 @@ class DecoderWithAttention(nn.Module):
         else:
             self.pos_embedding = None
 
-        self.rnn_h = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
-        self.rnn_v = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
+        if not self.double_attention:
+            self.rnn_h = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
+            self.rnn_v = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
+        else:
+            self.rnn_h = Rnn(self.embedding, self.attention_h, embed_dim, encoder_dim, decoder_dim)
+            self.rnn_v = Rnn(self.embedding, self.attention_v, embed_dim, encoder_dim, decoder_dim)
 
         # self.decode_step_h = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
         # self.decode_step_v = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
@@ -465,12 +476,14 @@ class ImageCaptionWithBit(nn.Module):
                  max_len,                  
                  disable_attention = None,
                  enable_topo_predict = None,
-                #  enable_attention_regularization = None,
+                 #  enable_attention_regularization = None,
+                 double_attention = None,
                  proof_of_concept: bool = False):
         super().__init__()
         self.proof_of_concept: bool = proof_of_concept
         self.disable_attention = (disable_attention == '1')
         self.enable_topo_predict = (enable_topo_predict == '1')
+        self.double_attention = (double_attention == '1')
         # self.enable_attention_regularization = (enable_attention_regularization == '1')
 
         print("[params] {}".format(", ".join([
@@ -478,6 +491,7 @@ class ImageCaptionWithBit(nn.Module):
                 "proof_of_concept": self.proof_of_concept,
                 "disable_attention": self.disable_attention,
                 "enable_topo_predict": self.enable_topo_predict,
+                "double_attention": self.double_attention,
                 # "enable_attention_regularization": self.enable_attention_regularization
             }.items()
         ])))
@@ -491,6 +505,7 @@ class ImageCaptionWithBit(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
+                                            double_attention=self.double_attention,
                                             disable_attention=self.disable_attention)
         self.criterion = nn.CrossEntropyLoss()
         
