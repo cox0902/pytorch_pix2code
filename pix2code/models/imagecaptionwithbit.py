@@ -95,6 +95,24 @@ class Attention(nn.Module):
         return attention_weighted_encoding, alpha
 
 
+class AttentionSum(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, encoder_out, decoder_hidden):
+        return encoder_out.sum(dim=1), None
+    
+
+class AttentionAvg(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        
+    def forward(self, encoder_out: torch.Tensor, decoder_hidden):
+        return encoder_out.mean(dim=1), None
+
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, max_len, emb_dim):
         super().__init__()
@@ -133,10 +151,10 @@ class Rnn(nn.Module):
     
     def forward(self, x, y, hidden):
         x_emb = self.embedding(x)
-        if self.attention is not None:
-            y_hat, _ = self.attention(y, hidden[0])
-        else:
-            y_hat = y.sum(dim=1)
+        # if self.attention is not None:
+        y_hat, _ = self.attention(y, hidden[0])
+        # else:
+        #     y_hat = y.sum(dim=1)
         # print(y_hat.shape, x_emb.shape)
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden)
 
@@ -157,6 +175,8 @@ class TreeNode:
         self.hidden_v = None
         self.hidden_h = None
         self.height = 1 if parent is None else parent.height + 1
+        self.score = 0
+        self.count = 1
 
     def add_child(self, device, iv) -> "TreeNode":
         node = TreeNode(device, iv, self)
@@ -167,6 +187,11 @@ class TreeNode:
         walk(self)
         for each in self.children:
             each.preorder_walk(walk)
+
+    def postorder_walk(self, walk):
+        for each in self.children:
+            each.postorder_walk(walk)
+        walk(self)
 
     def preorder_walk_children(self, walk):
         for each in self.children:
@@ -189,8 +214,10 @@ class TreeNode:
         return ivs
 
     @staticmethod
-    def _make_graph(n: "TreeNode", vocabs: List[str], dot: "Digraph"):
+    def _make_graph(n: "TreeNode", vocabs: List[str], dot: "Digraph", show_score: bool = False):
         label = vocabs[n.iv]
+        if show_score:
+            label += f"\n{n.score:.4f}"
         # if n.left is not None:
         #     label = f"{vocabs[n.left.iv]} < " + label
         # if n.right is not None:
@@ -199,10 +226,10 @@ class TreeNode:
         if n.parent is not None:
             dot.edge(n.parent.id, n.id)
 
-    def visualize(self, vocabs: List[str]) -> "Digraph":
+    def visualize(self, vocabs: List[str], show_score: bool = False) -> "Digraph":
         from graphviz import Digraph
         dot = Digraph()
-        self.preorder_walk(partial(TreeNode._make_graph, vocabs=vocabs, dot=dot))
+        self.preorder_walk(partial(TreeNode._make_graph, vocabs=vocabs, dot=dot, show_score=show_score))
         return dot
     
     @staticmethod
@@ -251,6 +278,49 @@ class TreeNode:
             TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
         # self.preorder_walk_children(partial(TreeNode._train, rnn_h=rnn_h, rnn_v=rnn_v))
         return prds, tgts
+    
+    @staticmethod
+    def _update_score(n: "TreeNode", fc, rnn_h: Rnn, rnn_v: Rnn, y):
+        # print("=" * 100)
+        if n.left.iv != 3:
+            n.hidden_v = n.left.hidden_v
+            # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
+        else:
+            n.hidden_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+        n.hidden_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
+
+        # print("=>", vocabs[n.iv])
+        logit = fc(n.hidden_h[0], n.hidden_v[0])
+        n.score = nn.functional.log_softmax(logit, dim=-1)[0, n.iv]
+
+        for each in n.children[1:]:
+            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+
+    def update_score(self, fc, rnn_h: Rnn, rnn_v: Rnn, y):
+        self.hidden_v = rnn_v.init_hidden_state(y)
+        hidden_h = rnn_h.init_hidden_state(y)
+        self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
+        for each in self.children[1:]:
+            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+
+    @staticmethod
+    def _cumulate_score(n: "TreeNode"):
+        sum_children_score = 0
+        sum_children_count = 0
+        for each in n.children:
+            sum_children_score += each.score
+            sum_children_count += each.count
+        n.score += sum_children_score
+        if len(n.children) > 0:
+            n.count += sum_children_count - 1
+
+    @staticmethod
+    def _adjust_score(n: "TreeNode", alpha: float = 1.0):
+        n.score /= (n.count ** alpha)
+
+    def cumulate_score(self, alpha: float = 1.0):
+        self.postorder_walk(TreeNode._cumulate_score)
+        self.postorder_walk(partial(TreeNode._adjust_score, alpha=alpha))
 
     @staticmethod
     def _finalize(device, n: "TreeNode"):
@@ -310,7 +380,7 @@ class DecoderWithAttention(nn.Module):
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
                  encoder_dim=2048, dropout=0.5, pos_embed=None, 
                  double_attention=False,
-                 disable_attention=False):
+                 disable_attention=None):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -330,14 +400,16 @@ class DecoderWithAttention(nn.Module):
         self.disable_attention = disable_attention
         self.double_attention = double_attention
 
-        if not self.disable_attention:
+        if self.disable_attention is None:
             if not self.double_attention:
                 self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
             else:
                 self.attention_v = Attention(encoder_dim, decoder_dim, attention_dim)
                 self.attention_h = Attention(encoder_dim, decoder_dim, attention_dim)
+        elif self.disable_attention == "avg":
+            self.attention = AttentionAvg()
         else:
-            self.attention = None
+            self.attention = AttentionSum()
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
 
@@ -453,6 +525,7 @@ class DecoderWithAttention(nn.Module):
                 if iv == 0:
                     iv = 4
                 node = parent_node.add_child(device, iv)
+                node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
                 if iv == 4:
                     break
                 node.hidden_v = hidden_v
@@ -462,7 +535,12 @@ class DecoderWithAttention(nn.Module):
             else:
                 print("max width exceed!")
 
+        root.cumulate_score()
         return root
+    
+    def predict_score(self, encoder_out, tree: "TreeNode", verbose=False):
+        tree.update_score(self.fc, self.rnn_h, self.rnn_v, encoder_out)
+        tree.cumulate_score()
 
 
 class ImageCaptionWithBit(nn.Module):
@@ -481,7 +559,7 @@ class ImageCaptionWithBit(nn.Module):
                  proof_of_concept: bool = False):
         super().__init__()
         self.proof_of_concept: bool = proof_of_concept
-        self.disable_attention = (disable_attention == '1')
+        self.disable_attention = disable_attention
         self.enable_topo_predict = (enable_topo_predict == '1')
         self.double_attention = (double_attention == '1')
         # self.enable_attention_regularization = (enable_attention_regularization == '1')
@@ -577,4 +655,15 @@ class ImageCaptionWithBit(nn.Module):
             trees.append(tree)
 
         return trees
-
+    
+    def predict_score(self, images, trees, verbose=False):
+        batch_size = images.size(0)
+        assert len(trees) == batch_size
+        
+        # with torch.no_grad() should be called outside this scope.
+        encoder_out = self.encoder(images)
+        encoder_dim = encoder_out.size(-1)
+        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        
+        for i, tree in enumerate(trees):
+            self.decoder.predict_score(encoder_out[i, :, :].unsqueeze(0), tree, verbose=verbose)
