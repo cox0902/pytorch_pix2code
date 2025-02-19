@@ -233,7 +233,8 @@ class TreeNode:
         return dot
     
     @staticmethod
-    def _train(n: "TreeNode", prds: List, tgts: List, fc, rnn_h: Rnn, rnn_v: Rnn, y):
+    def _train(n: "TreeNode", prds: List, tgts: List, fc: "Fusing", rnn_h: Rnn, rnn_v: Rnn, y, 
+               topos: Optional[List] = None):
         # print("=" * 100)
         if n.left.iv != 3:
             n.hidden_v = n.left.hidden_v
@@ -243,11 +244,19 @@ class TreeNode:
         n.hidden_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
 
         # print("=>", vocabs[n.iv])
-        prds.append(fc(n.hidden_h[0], n.hidden_v[0]))
+        if topos is not None:
+            out, p_h, p_v = fc(n.hidden_h[0], n.hidden_v[0])
+            t_h = 0 if n.right.iv == 4 else 1
+            t_v = 0 if len(n.children) == 2 else 1
+            topos.append(torch.Tensor([p_h, t_h, p_v, t_v]))
+        else:
+            out = fc(n.hidden_h[0], n.hidden_v[0])
+        prds.append(out)
         tgts.append(n.iv)
 
-        for each in n.children[1:]:
-            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+        children = n.children[1:-1] if topos is not None else n.children[1:]
+        for each in children:
+            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, topos=topos)
 
         # if n.right.iv == 4:
         #     print("=" * 100)
@@ -260,9 +269,10 @@ class TreeNode:
         if n.iv == 3:
             n.hidden_h = hidden_h
     
-    def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y):
+    def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
 
         prds, tgts = [], []
+        topos = [] if has_topo else None
 
         # self.hidden_h = rnn_h.init_hidden_state()
         # self.hidden_v = rnn_v.forward(self.iv, rnn_v.init_hidden_state())
@@ -274,13 +284,17 @@ class TreeNode:
         hidden_h = rnn_h.init_hidden_state(y)
         self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
     
-        for each in self.children[1:]:
-            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+        children = self.children[1:-1] if topos is not None else self.children[1:]
+        for each in children:
+            TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, topos=topos)
         # self.preorder_walk_children(partial(TreeNode._train, rnn_h=rnn_h, rnn_v=rnn_v))
-        return prds, tgts
+        if has_topo:
+            return prds, tgts, topos
+        else:
+            return prds, tgts
     
     @staticmethod
-    def _update_score(n: "TreeNode", fc, rnn_h: Rnn, rnn_v: Rnn, y):
+    def _update_score(n: "TreeNode", fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
         # print("=" * 100)
         if n.left.iv != 3:
             n.hidden_v = n.left.hidden_v
@@ -290,18 +304,24 @@ class TreeNode:
         n.hidden_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
 
         # print("=>", vocabs[n.iv])
-        logit = fc(n.hidden_h[0], n.hidden_v[0])
+        if has_topo:
+            logit, _, _ = fc(n.hidden_h[0], n.hidden_v[0])
+        else:
+            logit = fc(n.hidden_h[0], n.hidden_v[0])
         n.score = nn.functional.log_softmax(logit, dim=-1)[0, n.iv]
 
-        for each in n.children[1:]:
-            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+        children = n.children[1:-1] if has_topo is not None else n.children[1:]
+        for each in children:
+            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, has_topo=has_topo)
 
-    def update_score(self, fc, rnn_h: Rnn, rnn_v: Rnn, y):
+    def update_score(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
         self.hidden_v = rnn_v.init_hidden_state(y)
         hidden_h = rnn_h.init_hidden_state(y)
         self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
-        for each in self.children[1:]:
-            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y)
+
+        children = self.children[1:-1] if has_topo is not None else self.children[1:]
+        for each in children:
+            TreeNode._update_score(each, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, has_topo=has_topo)
 
     @staticmethod
     def _cumulate_score(n: "TreeNode"):
@@ -357,19 +377,40 @@ class TreeNode:
 
 class Fusing(nn.Module):
 
-    def __init__(self, decoder_dim, vocab_size, dropout=0.5, *args, **kwargs):
+    def __init__(self, decoder_dim, vocab_size, dropout=0.5, enable_topo_predict=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.enable_topo_predict = enable_topo_predict
+
         self.fc = nn.Linear(decoder_dim * 2, vocab_size)
         self.dropout = nn.Dropout(p=dropout)
+
+        if self.enable_topo_predict:
+            self.proj_h = nn.Linear(decoder_dim, 1)
+            self.proj_v = nn.Linear(decoder_dim, 1)
+            self.offset_h = nn.Parameter(torch.zeros((1, ), dtype=torch.float), requires_grad=True)
+            self.offset_v = nn.Parameter(torch.zeros((1, ), dtype=torch.float), requires_grad=True)
+
         self.init_weights()
     
     def init_weights(self):
-        self.fc.bias.data.fill_(0)
-        self.fc.weight.data.uniform_(-0.1, 0.1)
+        layers = [self.fc]
+        if self.enable_topo_predict:
+            layers.extend([self.proj_h, self.proj_v])
+        for layer in layers:
+            layer.bias.data.fill_(0)
+            layer.weight.data.uniform_(-0.1, 0.1)
 
-    def forward(self, x, y):
-        cat = torch.cat([x, y], dim=1)
-        return self.fc(self.dropout(cat))
+    def forward(self, h, v):
+        cat = torch.cat([h, v], dim=1)
+        out = self.fc(self.dropout(cat))
+
+        if self.enable_topo_predict:
+            p_h = nn.functional.sigmoid(self.proj_h(h))
+            p_v = nn.functional.sigmoid(self.proj_v(v))
+            out += p_h * self.offset_h + p_v * self.offset_v
+            return out, p_h, p_v
+        
+        return out
 
 
 class DecoderWithAttention(nn.Module):
@@ -380,7 +421,8 @@ class DecoderWithAttention(nn.Module):
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
                  encoder_dim=2048, dropout=0.5, pos_embed=None, 
                  double_attention=False,
-                 disable_attention=None):
+                 disable_attention=None,
+                 enable_topo_predict=False):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -399,6 +441,7 @@ class DecoderWithAttention(nn.Module):
         self.dropout = dropout
         self.disable_attention = disable_attention
         self.double_attention = double_attention
+        self.enable_topo_predict = enable_topo_predict
 
         if self.disable_attention is None:
             if not self.double_attention:
@@ -432,7 +475,7 @@ class DecoderWithAttention(nn.Module):
         # self.init_h_v = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial hidden state of LSTMCell
         # self.init_c_v = nn.Linear(encoder_dim, decoder_dim)  # linear layer to find initial cell state of LSTMCell
 
-        self.fc = Fusing(decoder_dim, vocab_size, dropout=dropout)  # linear layer to find scores over vocabulary
+        self.fc = Fusing(decoder_dim, vocab_size, dropout=dropout, enable_topo_predict=enable_topo_predict)  # linear layer to find scores over vocabulary
         self.init_weights()  # initialize some layers with the uniform distribution
 
     def init_weights(self):
@@ -466,6 +509,8 @@ class DecoderWithAttention(nn.Module):
         targets = []
         if return_alphas:
             alphas = []
+        if self.enable_topo_predict:
+            topos = []
 
         for bi in range(batch_size):
             # print(bi)
@@ -476,7 +521,11 @@ class DecoderWithAttention(nn.Module):
 
             # tree.preorder_walk(lambda n: print(n.iv.device))
 
-            prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
+            if self.enable_topo_predict:
+                prd, tgt, topo = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None], has_topo=True)
+                topos.extend(topo)
+            else:
+                prd, tgt = tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None])
 
             # print(len(prd), prd[0].shape)
             # print(tgt)
@@ -487,9 +536,14 @@ class DecoderWithAttention(nn.Module):
             if return_alphas:
                 alphas.append(torch.stack(alphas_nb).sum(dim=0).squeeze())
 
-        if return_alphas:
-            return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
-        return torch.cat(predict, dim=0), torch.stack(targets)
+        if self.enable_topo_predict:
+            if return_alphas:
+                return torch.stack(predict), torch.stack(targets), torch.stack(alphas), torch.stack(topos)
+            return torch.cat(predict, dim=0), torch.stack(targets), torch.stack(topos)
+        else:
+            if return_alphas:
+                return torch.stack(predict), torch.stack(targets), torch.stack(alphas)
+            return torch.cat(predict, dim=0), torch.stack(targets)
     
     def predict(self, encoder_out, max_v_len, max_h_len, verbose=False):
         if verbose:
@@ -584,7 +638,9 @@ class ImageCaptionWithBit(nn.Module):
                                             vocab_size=vocab_size,
                                             dropout=0.2,
                                             double_attention=self.double_attention,
-                                            disable_attention=self.disable_attention)
+                                            disable_attention=self.disable_attention,
+                                            enable_topo_predict=self.enable_topo_predict,
+                                            )
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
@@ -596,7 +652,10 @@ class ImageCaptionWithBit(nn.Module):
         imgs = self.encoder(imgs)
 
         # if not self.enable_attention_regularization:
-        scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
+        if self.enable_topo_predict:
+            scores, targets, topos = self.decoder(imgs, caps, caplens, return_alphas=False)
+        else:
+            scores, targets = self.decoder(imgs, caps, caplens, return_alphas=False)
         # else:
         #     scores, targets, alphas = self.decoder(imgs, caps, caplens)
 
@@ -614,15 +673,26 @@ class ImageCaptionWithBit(nn.Module):
         # Calculate loss
         loss = self.criterion(scores, targets)
 
-        # if self.enable_attention_regularization:
-        #     # Add doubly stochastic attention regularization
-        #     loss += self.alpha_c * ((1. - alphas) ** 2).mean()
-
-        return {
+        r = {
             "loss": loss, 
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets
         }
+
+        if self.enable_topo_predict:
+            p_h, t_h, p_v, t_v = topos.chunk(4, dim=-1)
+            p = torch.cat([p_h, p_v], dim=0).squeeze(0)
+            t = torch.cat([t_h, t_v], dim=0).squeeze(0)
+            loss_topo = nn.functional.binary_cross_entropy_with_logits(p, t)
+            # print(loss_topo)
+            loss += loss_topo
+            r["loss/topo"] = loss_topo
+
+        # if self.enable_attention_regularization:
+        #     # Add doubly stochastic attention regularization
+        #     loss += self.alpha_c * ((1. - alphas) ** 2).mean()
+
+        return r
     
     # def predict(self, batch, hiddens = None):
     #     imgs = batch["image"]
