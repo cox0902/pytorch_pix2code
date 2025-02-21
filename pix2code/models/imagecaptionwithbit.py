@@ -5,7 +5,33 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torchvision
-import transformers
+from einops import rearrange, repeat, reduce
+from torchvision.ops.feature_pyramid_network import FeaturePyramidNetwork
+from torchvision.models.feature_extraction import create_feature_extractor
+
+
+class FpnEncoder(nn.Module):
+    """
+    Encoder.
+    """
+    def __init__(self, resnet):
+        super().__init__()
+        # Extract 4 main layers
+        self.body = create_feature_extractor(
+            resnet, return_nodes={f'layer{k}': str(v) for v, k in enumerate([1, 2, 3, 4])})
+        # Dry run to get number of channels for FPN
+        inp = torch.randn(2, 3, 256, 256)
+        with torch.no_grad():
+            out = self.body(inp)
+        in_channels_list = [o.shape[1] for o in out.values()]
+        # Build FPN
+        self.out_channels = 256
+        self.fpn = FeaturePyramidNetwork(in_channels_list, out_channels=self.out_channels)
+
+    def forward(self, images):
+        x = self.body(images)
+        x = self.fpn(x)
+        return [x[str(i)] for i in range(4)]
 
 
 class Encoder(nn.Module):
@@ -55,6 +81,15 @@ class Encoder(nn.Module):
                 p.requires_grad = fine_tune
 
 
+class ChannelAttention(nn.Module):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, hidden):
+        pass
+
+
 class Attention(nn.Module):
     """
     Attention Network.
@@ -83,8 +118,13 @@ class Attention(nn.Module):
         :param decoder_hidden: previous decoder output, a tensor of dimension (batch_size, decoder_dim)
         :return: attention weighted encoding, weights
         """
+        encoder_out = rearrange(encoder_out, "B W H C -> B (W H) C")
+        # print(encoder_out.shape, decoder_hidden.shape)
+
         att1 = self.encoder_att(encoder_out)  # (batch_size, num_pixels, attention_dim)
         att2 = self.decoder_att(decoder_hidden)  # (batch_size, attention_dim)
+        # print(att1.shape, att2.shape)
+        
         att = self.full_att(self.relu(att1 + att2.unsqueeze(1))).squeeze(2)  # (batch_size, num_pixels)
         alpha = self.softmax(att)  # (batch_size, num_pixels)
         attention_weighted_encoding = (encoder_out * alpha.unsqueeze(2)).sum(dim=1)  # (batch_size, encoder_dim)
@@ -134,17 +174,25 @@ class Rnn(nn.Module):
                  embed_dim,
                  encoder_dim,
                  decoder_dim,
+                 conditional_init: bool = False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.conditonal_init = conditional_init
         self.embedding = embedding
         self.attention = attention
 
         self.rnn_step = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)
-        self.init_h = nn.Linear(encoder_dim, decoder_dim)
-        self.init_c = nn.Linear(encoder_dim, decoder_dim)
+        if not conditional_init:
+            self.init_h = nn.Linear(encoder_dim, decoder_dim)
+            self.init_c = nn.Linear(encoder_dim, decoder_dim)
+        else:
+            self.init_h = nn.Linear(encoder_dim + decoder_dim, decoder_dim)
+            self.init_c = nn.Linear(encoder_dim + decoder_dim, decoder_dim)
 
-    def init_hidden_state(self, x):
-        x = x.mean(dim=1)
+    def init_hidden_state(self, x, y = None):
+        x = reduce(x, "B W H C -> B C", reduction="mean")   # x.mean(dim=1)
+        if y is not None:
+            x = torch.cat([x, y], dim=-1)
         h = self.init_h(x)
         c = self.init_c(x)
         return h, c
@@ -154,7 +202,8 @@ class Rnn(nn.Module):
         if self.attention is not None:
             y_hat, alpha = self.attention(y, hidden[0])
         else:
-            y_hat = y.sum(dim=1)
+            # print(y.shape)
+            y_hat = reduce(y, "B W H C -> B C", reduction="sum")
             alpha = None
         # print(y_hat.shape, x_emb.shape)
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden), alpha
@@ -246,6 +295,11 @@ class TreeNode:
             n.hidden_v, alpha_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
             if alphas_v is not None:
                 alphas_v.append(alpha_v)
+            
+            if "conditional_init" in rnn_h.__dict__ and rnn_h.conditonal_init:
+                assert n.left.hidden_h is None
+                n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v)
+
         n.hidden_h, alpha_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
         if alphas_h is not None:
             alphas_h.append(alpha_h)
@@ -288,8 +342,11 @@ class TreeNode:
         # init_left.hidden_h = self.hidden_h[:]  # self.hidden_h.clone()
         # init_left.hidden_v = self.hidden_v[:]  # self.hidden_v.clone()
         # hidden_h = rnn_h.forward(self.iv, rnn_h.init_hidden_state())
-        hidden_h = rnn_h.init_hidden_state(y)
-        self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
+        if "conditional_init" in rnn_h.__dict__ and rnn_h.conditonal_init:
+            pass
+        else:
+            hidden_h = rnn_h.init_hidden_state(y)
+            self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
     
         children = self.children[1:-1] if topos is not None else self.children[1:]
         for each in children:
@@ -424,9 +481,9 @@ class DecoderWithAttention(nn.Module):
 
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
                  encoder_dim=2048, dropout=0.5, pos_embed=None, 
-                 double_attention=False,
-                 disable_attention=None,
-                 enable_topo_predict=False):
+                 attention_mode: Optional[str] = None,
+                 enable_topo_predict=False,
+                 enable_conditional_init=False):
         """
         :param attention_dim: size of attention network
         :param embed_dim: embedding size
@@ -443,19 +500,24 @@ class DecoderWithAttention(nn.Module):
         self.decoder_dim = decoder_dim
         self.vocab_size = vocab_size
         self.dropout = dropout
-        self.disable_attention = disable_attention
-        self.double_attention = double_attention
+        self.attention_mode = attention_mode
+        self.double_attention = (attention_mode.endswith("x2") if attention_mode is not None else False)
         self.enable_topo_predict = enable_topo_predict
+        self.enable_conditional_init = enable_conditional_init
 
-        if self.disable_attention is None:
+        if self.attention_mode is None:
             if not self.double_attention:
                 self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
             else:
                 self.attention_v = Attention(encoder_dim, decoder_dim, attention_dim)
                 self.attention_h = Attention(encoder_dim, decoder_dim, attention_dim)
-        elif self.disable_attention == "avg":
+        elif self.attention_mode.startswith("avg"):
             self.attention = AttentionAvg()
-        else:
+        elif self.attention_mode.startswith("csa"):
+            self.double_attention = True
+            self.attention_v = None
+            self.attention_h = None
+        else:  # self.attention_mode == "sum":
             self.attention = AttentionSum()
 
         self.embedding = nn.Embedding(vocab_size, embed_dim)  # embedding layer
@@ -466,10 +528,12 @@ class DecoderWithAttention(nn.Module):
             self.pos_embedding = None
 
         if not self.double_attention:
-            self.rnn_h = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
+            self.rnn_h = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim,
+                             conditional_init=self.enable_conditional_init)
             self.rnn_v = Rnn(self.embedding, self.attention, embed_dim, encoder_dim, decoder_dim)
         else:
-            self.rnn_h = Rnn(self.embedding, self.attention_h, embed_dim, encoder_dim, decoder_dim)
+            self.rnn_h = Rnn(self.embedding, self.attention_h, embed_dim, encoder_dim, decoder_dim,
+                             conditional_init=self.enable_conditional_init)
             self.rnn_v = Rnn(self.embedding, self.attention_v, embed_dim, encoder_dim, decoder_dim)
 
         # self.decode_step_h = nn.LSTMCell(embed_dim + encoder_dim, decoder_dim, bias=True)  # decoding LSTMCell
@@ -499,10 +563,10 @@ class DecoderWithAttention(nn.Module):
         """
 
         batch_size = encoder_out.size(0)
-        encoder_dim = encoder_out.size(-1)
+        # encoder_dim = encoder_out.size(-1)
 
         # Flatten image
-        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        # encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
 
         # Embedding
         # embeddings = self.embedding(encoded_captions)  # (batch_size, max_caption_length, embed_dim)
@@ -628,25 +692,25 @@ class ImageCaptionWithBit(nn.Module):
                  resnet, 
                  vocab_size: int, 
                  max_len,                  
-                 disable_attention = None,
+                 attention_mode = None,
                  enable_topo_predict = None,
                  enable_attention_regularization = None,
-                 double_attention = None,
+                 enable_conditional_init = None,
                  proof_of_concept: bool = False):
         super().__init__()
         self.proof_of_concept: bool = proof_of_concept
-        self.disable_attention = disable_attention
+        self.attention_mode = attention_mode
         self.enable_topo_predict = (enable_topo_predict == '1')
-        self.double_attention = (double_attention == '1')
         self.enable_attention_regularization = (enable_attention_regularization == '1')
+        self.enable_conditional_init = (enable_conditional_init == '1')
 
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
                 "proof_of_concept": self.proof_of_concept,
-                "disable_attention": self.disable_attention,
+                "attention_mode": self.attention_mode,
                 "enable_topo_predict": self.enable_topo_predict,
-                "double_attention": self.double_attention,
-                "enable_attention_regularization": self.enable_attention_regularization
+                "enable_attention_regularization": self.enable_attention_regularization,
+                "enable_conditional_init": self.enable_conditional_init
             }.items()
         ])))
 
@@ -659,10 +723,9 @@ class ImageCaptionWithBit(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
-                                            double_attention=self.double_attention,
-                                            disable_attention=self.disable_attention,
+                                            attention_mode=self.attention_mode,
                                             enable_topo_predict=self.enable_topo_predict,
-                                            )
+                                            enable_conditional_init=self.enable_conditional_init)
         self.criterion = nn.CrossEntropyLoss()
         
     def forward(self, batch):
@@ -736,15 +799,15 @@ class ImageCaptionWithBit(nn.Module):
         
         # with torch.no_grad() should be called outside this scope.
         encoder_out = self.encoder(images)
-        encoder_dim = encoder_out.size(-1)
-        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        # encoder_dim = encoder_out.size(-1)
+        # encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
 
         trees = []
 
         for i in range(batch_size):
             if verbose:
                 print(f"Sample {i} =>")
-            tree = self.decoder.predict(encoder_out[i, :, :].unsqueeze(0), 
+            tree = self.decoder.predict(encoder_out[i][None], 
                                         max_v_len, max_h_len, verbose=verbose)  # (batch_size, decoder_dim)
             trees.append(tree)
 
@@ -756,8 +819,8 @@ class ImageCaptionWithBit(nn.Module):
         
         # with torch.no_grad() should be called outside this scope.
         encoder_out = self.encoder(images)
-        encoder_dim = encoder_out.size(-1)
-        encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+        # encoder_dim = encoder_out.size(-1)
+        # encoder_out = encoder_out.view(batch_size, -1, encoder_dim)  # (batch_size, num_pixels, encoder_dim)
         
         for i, tree in enumerate(trees):
-            self.decoder.predict_score(encoder_out[i, :, :].unsqueeze(0), tree, verbose=verbose)
+            self.decoder.predict_score(encoder_out[i][None], tree, verbose=verbose)
