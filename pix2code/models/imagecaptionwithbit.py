@@ -177,7 +177,7 @@ class Rnn(nn.Module):
                  conditional_init: bool = False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.conditonal_init = conditional_init
+        self.conditional_init = conditional_init
         self.embedding = embedding
         self.attention = attention
 
@@ -296,9 +296,9 @@ class TreeNode:
             if alphas_v is not None:
                 alphas_v.append(alpha_v)
             
-            if getattr(rnn_h, "conditonal_init", False):
+            if getattr(rnn_h, "conditional_init", False):
                 assert n.left.hidden_h is None
-                n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v)
+                n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v[0])
 
         n.hidden_h, alpha_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
         if alphas_h is not None:
