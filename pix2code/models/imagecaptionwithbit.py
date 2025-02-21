@@ -505,7 +505,7 @@ class DecoderWithAttention(nn.Module):
         self.enable_topo_predict = enable_topo_predict
         self.enable_conditional_init = enable_conditional_init
 
-        if self.attention_mode is None:
+        if self.attention_mode in [None, "x2"]:
             if not self.double_attention:
                 self.attention = Attention(encoder_dim, decoder_dim, attention_dim)  # attention network
             else:
