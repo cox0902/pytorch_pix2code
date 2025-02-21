@@ -296,7 +296,7 @@ class TreeNode:
             if alphas_v is not None:
                 alphas_v.append(alpha_v)
             
-            if "conditional_init" in rnn_h.__dict__ and rnn_h.conditonal_init:
+            if getattr(rnn_h, "conditonal_init", False):
                 assert n.left.hidden_h is None
                 n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v)
 
@@ -342,7 +342,7 @@ class TreeNode:
         # init_left.hidden_h = self.hidden_h[:]  # self.hidden_h.clone()
         # init_left.hidden_v = self.hidden_v[:]  # self.hidden_v.clone()
         # hidden_h = rnn_h.forward(self.iv, rnn_h.init_hidden_state())
-        if "conditional_init" in rnn_h.__dict__ and rnn_h.conditonal_init:
+        if getattr(rnn_h, "conditional_init", False):
             pass
         else:
             hidden_h = rnn_h.init_hidden_state(y)
@@ -455,7 +455,7 @@ class Fusing(nn.Module):
     
     def init_weights(self):
         layers = [self.fc]
-        if "enable_topo_predict" in self.__dict__ and self.enable_topo_predict:
+        if getattr(self, "enable_topo_predict", False):
             layers.extend([self.proj_h, self.proj_v])
         for layer in layers:
             layer.bias.data.fill_(0)
@@ -465,7 +465,7 @@ class Fusing(nn.Module):
         cat = torch.cat([h, v], dim=1)
         out = self.fc(self.dropout(cat))
 
-        if "enable_topo_predict" in self.__dict__ and self.enable_topo_predict:
+        if getattr(self, "enable_topo_predict", False):
             p_h = nn.functional.sigmoid(self.proj_h(h))
             p_v = nn.functional.sigmoid(self.proj_v(v))
             out += p_h * self.offset_h + p_v * self.offset_v
@@ -678,7 +678,7 @@ class DecoderWithAttention(nn.Module):
         return root
     
     def predict_score(self, encoder_out, tree: "TreeNode", verbose=False):
-        enable_topo_predict = ("enable_topo_predict" in self.__dict__ and self.enable_topo_predict)
+        enable_topo_predict = getattr(self, "enable_topo_predict", False)
         tree.update_score(self.fc, self.rnn_h, self.rnn_v, encoder_out, enable_topo_predict)
         tree.cumulate_score()
 
