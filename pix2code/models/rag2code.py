@@ -1,10 +1,11 @@
 import faiss
+import h5py
+import numpy as np
 import math
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
@@ -193,12 +194,19 @@ class Decoder(nn.Module):
         return output
     
 
-def retrieve_fn(query, index_path, code_path, top_most: bool = False):
+def retrieve_fn(query, index_path, feature_path, code_path, top_most: bool = False):
     index = faiss.read_index(index_path)
     _, I = index.search(query, k=1 if top_most else 2)
+    del index
     if top_most:
-        return I[:, 1]
-    return I[:, 0]
+        docids = I[:, 1]
+    docids = I[:, 0]
+    with h5py.File(code_path, "r") as h:
+        codes = h["code"][docids]
+    features = np.load(feature_path, "r")
+    embeddings = features[docids]
+    del features
+    return embeddings, codes
 
 
 class Rag2Code(nn.Module):
@@ -264,10 +272,16 @@ class Rag2Code(nn.Module):
         memory = self.img_encoder(img)
         # print(memory.shape)  # (batch_size, 257, 512)
 
-        ret_memory = rearrange(memory, "b s d -> (b s) d").detach().cpu().numpy()
+        ret_memory = rearrange(memory, "b s d -> (b s) d")
 
-        result = self.retrieve_fn(ret_memory)
-        print(result)
+        embb, code = self.retrieve_fn(ret_memory.detach().cpu().numpy())
+        print(embb, code)
+
+        inp_emb = self.positional_encoding(self.tok_emb(code))
+        print(inp_emb.shape)
+
+        inp_enc = self.txt_encoder(inp_emb)
+        print(inp_enc.shape)
 
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 

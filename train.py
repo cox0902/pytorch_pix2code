@@ -195,7 +195,8 @@ def build_model(args, data_set):
 
         model_params["retrieve_fn"] = partial(retrieve_fn, 
                                               index_path=args.retriever_index_path, 
-                                              code_path=args.retriever_code_path)
+                                              code_path=args.retriever_code_path,
+                                              top_most=True)
 
     if "generator" in model_params:
         if model_params["generator"].startswith("beam"):
