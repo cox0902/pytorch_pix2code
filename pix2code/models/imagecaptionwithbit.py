@@ -2,6 +2,7 @@ from typing import *
 
 from functools import partial
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
@@ -141,6 +142,7 @@ class AttentionSum(nn.Module):
         super().__init__()
         
     def forward(self, encoder_out, decoder_hidden):
+        encoder_out = rearrange(encoder_out, "B W H C -> B (W H) C")
         return encoder_out.sum(dim=1), None
     
 
@@ -150,6 +152,7 @@ class AttentionAvg(nn.Module):
         super().__init__()
         
     def forward(self, encoder_out: torch.Tensor, decoder_hidden):
+        encoder_out = rearrange(encoder_out, "B W H C -> B (W H) C")
         return encoder_out.mean(dim=1), None
 
 
@@ -214,6 +217,7 @@ class TreeNode:
     def __init__(self, device, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
         self.id = hex(id(self))
         self.iv = torch.tensor(iv).to(device) if type(iv) == int else iv.clone().to(device)
+        self.iv_ = self.iv
 
         # print(self.iv, device, self.iv.device)
 
@@ -263,44 +267,85 @@ class TreeNode:
         ivs.append(4)  # [END]
         return ivs
 
-    @staticmethod
-    def _make_graph(n: "TreeNode", vocabs: List[str], dot: "Digraph", show_score: bool = False):
-        label = vocabs[n.iv]
+    def format_label(self, vocabs, show_score: bool = False):
+        label = vocabs[self.iv]
         if show_score:
-            label += f"\n{n.score:.4f}"
-        # if n.left is not None:
-        #     label = f"{vocabs[n.left.iv]} < " + label
-        # if n.right is not None:
-        #     label = label + f" > {vocabs[n.right.iv]}"
-        dot.node(name=n.id, label=label)
-        if n.parent is not None:
-            dot.edge(n.parent.id, n.id)
+            label += f"\n{self.score:.4f}"
+        return label 
 
-    def visualize(self, vocabs: List[str], show_score: bool = False) -> "Digraph":
+    @staticmethod
+    def _make_graph(n: "TreeNode", 
+                    vocabs: List[str],
+                    dot,
+                    show_connections: bool = False,
+                    show_controls: bool = True, 
+                    show_score: bool = False):
+        
+        if show_controls or (not show_controls and n.iv >= 8):
+            dot.node(name=n.id, label=n.format_label(vocabs, show_score=show_score))
+        with dot.subgraph() as s:
+            s.attr(rank="same")
+            children = n.children if show_controls else n.children[1:-1]
+            for each in children:
+                s.node(name=each.id, label=each.format_label(vocabs, show_score=show_score))
+                if show_controls or (not show_controls and n.iv >= 8):
+                    dot.edge(n.id, each.id)
+
+        if show_connections:
+            children = n.children[:-1] if show_controls else n.children[1:-2]
+            for each in children:
+                dot.edge(each.id, each.right.id, style="dashed", arrowhead="none", arrowtail="none")
+
+        for each in n.children:
+            TreeNode._make_graph(each, vocabs, dot, 
+                                 show_connections=show_connections, 
+                                 show_controls=show_controls, 
+                                 show_score=show_score)
+
+    def visualize(self, 
+                  vocabs: List[str], 
+                  show_connections: bool = False,
+                  show_controls: bool = True, 
+                  show_score: bool = False) -> "Digraph":
         from graphviz import Digraph
         dot = Digraph()
-        self.preorder_walk(partial(TreeNode._make_graph, vocabs=vocabs, dot=dot, show_score=show_score))
+
+        TreeNode._make_graph(self, 
+                             vocabs=vocabs, 
+                             dot=dot, 
+                             show_connections=show_connections,
+                             show_controls=show_controls, 
+                             show_score=show_score)
         return dot
     
     @staticmethod
     def _train(n: "TreeNode", prds: List, tgts: List, fc: "Fusing", rnn_h: Rnn, rnn_v: Rnn, y, 
                topos: Optional[List] = None,
                alphas_h: Optional[List] = None,
-               alphas_v: Optional[List] = None):
+               alphas_v: Optional[List] = None,
+               teacher_forcing_rate = 1.0):
         # print("=" * 100)
-        if n.left.iv != 3:
-            n.hidden_v = n.left.hidden_v
-            # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
+        if teacher_forcing_rate == 1.0:
+            if n.left.iv != 3:
+                n.hidden_v = n.left.hidden_v
+                # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
+            else:
+                n.hidden_v, alpha_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+                if alphas_v is not None:
+                    alphas_v.append(alpha_v)
         else:
-            n.hidden_v, alpha_v = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+            parent_iv = n.parent.iv if np.random.rand() < teacher_forcing_rate else n.parent.iv_
+            n.hidden_v, alpha_v = rnn_v.forward(parent_iv, y, n.parent.hidden_v)
             if alphas_v is not None:
                 alphas_v.append(alpha_v)
             
+        if n.left.iv == 3:
             if getattr(rnn_h, "conditional_init", False):
                 assert n.left.hidden_h is None
                 n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v[0])
 
-        n.hidden_h, alpha_h = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
+        left_iv = n.left.iv if np.random.rand() < teacher_forcing_rate else n.left.iv_
+        n.hidden_h, alpha_h = rnn_h.forward(left_iv, y, n.left.hidden_h)
         if alphas_h is not None:
             alphas_h.append(alpha_h)
 
@@ -312,13 +357,17 @@ class TreeNode:
             topos.append(torch.Tensor([p_h, t_h, p_v, t_v]))
         else:
             out = fc(n.hidden_h[0], n.hidden_v[0])
+
+        n.iv_ = torch.argmax(nn.functional.softmax(out, dim=-1), dim=-1)[0]
+
         prds.append(out)
         tgts.append(n.iv)
 
         children = n.children[1:-1] if topos is not None else n.children[1:]
         for each in children:
             TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, 
-                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v)
+                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v, 
+                            teacher_forcing_rate=teacher_forcing_rate)
 
         # if n.right.iv == 4:
         #     print("=" * 100)
@@ -332,8 +381,8 @@ class TreeNode:
             n.hidden_h = hidden_h
     
     def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, prds: List, tgts: List, 
-              topos: Optional[List] = None, alphas_h: Optional[List] = None, alphas_v: Optional[List] = None
-              ):
+              topos: Optional[List] = None, alphas_h: Optional[List] = None, alphas_v: Optional[List] = None,
+              teacher_forcing_rate = 1.0):
 
         # self.hidden_h = rnn_h.init_hidden_state()
         # self.hidden_v = rnn_v.forward(self.iv, rnn_v.init_hidden_state())
@@ -351,7 +400,8 @@ class TreeNode:
         children = self.children[1:-1] if topos is not None else self.children[1:]
         for each in children:
             TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, 
-                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v)
+                            topos=topos, alphas_h=alphas_h, alphas_v=alphas_v, 
+                            teacher_forcing_rate=teacher_forcing_rate)
         # self.preorder_walk_children(partial(TreeNode._train, rnn_h=rnn_h, rnn_v=rnn_v))
     
     @staticmethod
@@ -362,6 +412,10 @@ class TreeNode:
             # print(rnn_v.name, [vocabs[each] for each in n.hidden_v])
         else:
             n.hidden_v, _ = rnn_v.forward(n.parent.iv, y, n.parent.hidden_v)
+
+            if getattr(rnn_h, "conditional_init", False):
+                n.left.hidden_h = rnn_h.init_hidden_state(y, n.hidden_v[0])
+
         n.hidden_h, _ = rnn_h.forward(n.left.iv, y, n.left.hidden_h)
 
         # print("=>", vocabs[n.iv])
@@ -377,8 +431,12 @@ class TreeNode:
 
     def update_score(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, has_topo: bool = False):
         self.hidden_v = rnn_v.init_hidden_state(y)
-        hidden_h = rnn_h.init_hidden_state(y)
-        self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
+
+        if getattr(rnn_h, "conditional_init", False):
+            pass
+        else:
+            hidden_h = rnn_h.init_hidden_state(y)
+            self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
 
         children = self.children[1:-1] if has_topo else self.children[1:]
         for each in children:
@@ -481,6 +539,7 @@ class DecoderWithAttention(nn.Module):
 
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
                  encoder_dim=2048, dropout=0.5, pos_embed=None, 
+                 teacher_forcing_decay: float = 1.0,
                  attention_mode: Optional[str] = None,
                  enable_topo_predict=False,
                  enable_conditional_init=False):
@@ -504,6 +563,8 @@ class DecoderWithAttention(nn.Module):
         self.double_attention = (attention_mode.endswith("x2") if attention_mode is not None else False)
         self.enable_topo_predict = enable_topo_predict
         self.enable_conditional_init = enable_conditional_init
+        self.teacher_forcing_decay = teacher_forcing_decay
+        self.teacher_forcing_rate = 1.0
 
         if self.attention_mode in [None, "x2"]:
             if not self.double_attention:
@@ -602,7 +663,8 @@ class DecoderWithAttention(nn.Module):
             
             tree.train(self.fc, self.rnn_h, self.rnn_v, encoder_out[bi][None], 
                        prds=prd, tgts=tgt, topos=topo, 
-                       alphas_h=alphas_nb_h, alphas_v=alphas_nb_v)
+                       alphas_h=alphas_nb_h, alphas_v=alphas_nb_v,
+                       teacher_forcing_rate=self.teacher_forcing_rate)
 
             if topo is not None:          
                 topos.extend(topo)
@@ -624,7 +686,7 @@ class DecoderWithAttention(nn.Module):
             r["topos"] = torch.stack(topos)
         return r
     
-    def predict(self, encoder_out, max_v_len, max_h_len, verbose=False):
+    def predict(self, encoder_out, max_v_len, max_h_len, verbose=False, quiet: bool = False):
         if verbose:
             from tqdm.notebook import tqdm
 
@@ -632,19 +694,27 @@ class DecoderWithAttention(nn.Module):
 
         root = TreeNode(device, 3)
         root.hidden_v = self.rnn_v.init_hidden_state(encoder_out)
-        init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
+
+        if not getattr(self.rnn_h, "conditional_init", False):
+            init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
 
         queue = [root]
         while len(queue) != 0:
             parent_node = queue.pop()
             if parent_node.height >= max_v_len - 2:
-                print("max height exceed!")
+                if not quiet:
+                    print("max height exceed!")
                 break
 
             left_node = parent_node.add_child(device, 3)
-            left_node.hidden_h = init_hidden_h
 
             hidden_v, _ = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
+
+            if getattr(self.rnn_h, "conditional_init", False):
+                left_node.hidden_h = self.rnn_h.init_hidden_state(encoder_out, hidden_v[0])
+            else:
+                left_node.hidden_h = init_hidden_h
+
 
             tbar = range(max_h_len - 1)
             if verbose:
@@ -659,7 +729,8 @@ class DecoderWithAttention(nn.Module):
                     iv = 4
                 if i == max_h_len - 2:
                     iv = 4
-                    print("max width exceed!")
+                    if not quiet:
+                        print("max width exceed!")
                 node = parent_node.add_child(device, iv)
                 node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
                 if iv == 4:
@@ -692,6 +763,7 @@ class ImageCaptionWithBit(nn.Module):
                  resnet, 
                  vocab_size: int, 
                  max_len,                  
+                 teacher_forcing_decay = None,
                  attention_mode = None,
                  enable_topo_predict = None,
                  enable_attention_regularization = None,
@@ -703,6 +775,7 @@ class ImageCaptionWithBit(nn.Module):
         self.enable_topo_predict = (enable_topo_predict == '1')
         self.enable_attention_regularization = (enable_attention_regularization == '1')
         self.enable_conditional_init = (enable_conditional_init == '1')
+        self.teacher_forcing_decay = (float(teacher_forcing_decay) if teacher_forcing_decay is not None else 1.0)
 
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
@@ -723,11 +796,18 @@ class ImageCaptionWithBit(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
+                                            teacher_forcing_decay=self.teacher_forcing_decay,
                                             attention_mode=self.attention_mode,
                                             enable_topo_predict=self.enable_topo_predict,
                                             enable_conditional_init=self.enable_conditional_init)
         self.criterion = nn.CrossEntropyLoss()
         
+    def begin_epoch(self, epoch):
+        if epoch < 10:
+            return
+        self.decoder.teacher_forcing_rate *= self.decoder.teacher_forcing_decay
+        print(f"teacher_forcing_rate = {self.decoder.teacher_forcing_rate}")
+
     def forward(self, batch):
         imgs = batch["image"]
         caps = batch["code"].long()
@@ -794,7 +874,7 @@ class ImageCaptionWithBit(nn.Module):
     #         "hiddens": hiddens
     #     }
 
-    def predict(self, images, max_v_len, max_h_len, verbose=False):
+    def predict(self, images, max_v_len, max_h_len, verbose=False, quiet=False):
         batch_size = images.size(0)
         
         # with torch.no_grad() should be called outside this scope.
@@ -808,7 +888,7 @@ class ImageCaptionWithBit(nn.Module):
             if verbose:
                 print(f"Sample {i} =>")
             tree = self.decoder.predict(encoder_out[i][None], 
-                                        max_v_len, max_h_len, verbose=verbose)  # (batch_size, decoder_dim)
+                                        max_v_len, max_h_len, verbose=verbose, quiet=quiet)  # (batch_size, decoder_dim)
             trees.append(tree)
 
         return trees

@@ -536,7 +536,15 @@ class Trainer:
                 if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
                     self.adjust_learning_rate(0.8)
 
+            begin_epoch = getattr(self.get_inner_model(), "begin_epoch", None)
+            if begin_epoch is not None:
+                begin_epoch(epoch)
+
             self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
+
+            end_epoch = getattr(self.get_inner_model(), "end_epoch", None)
+            if end_epoch is not None:
+                end_epoch(epoch)
 
             if valid_loader is not None:
                 # self.train(data_loader=train_loader, metrics=metrics, epoch=epoch, proof_of_concept=proof_of_concept)
