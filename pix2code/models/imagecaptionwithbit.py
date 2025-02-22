@@ -783,7 +783,8 @@ class ImageCaptionWithBit(nn.Module):
                 "attention_mode": self.attention_mode,
                 "enable_topo_predict": self.enable_topo_predict,
                 "enable_attention_regularization": self.enable_attention_regularization,
-                "enable_conditional_init": self.enable_conditional_init
+                "enable_conditional_init": self.enable_conditional_init,
+                "teacher_forcing_decay": self.teacher_forcing_decay
             }.items()
         ])))
 
