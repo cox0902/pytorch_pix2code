@@ -278,6 +278,7 @@ class Rag2Code(nn.Module):
         # embb (257, 512)
         # code 
         print(embb.shape, code.shape)
+        code = torch.LongTensor(code).to(ret_memory.device)
 
         inp_emb = self.positional_encoding(self.tok_emb(code))
         print(inp_emb.shape)
