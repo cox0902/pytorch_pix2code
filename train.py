@@ -195,6 +195,7 @@ def build_model(args, data_set):
 
         model_params["retrieve_fn"] = partial(retrieve_fn, 
                                               index_path=args.retriever_index_path, 
+                                              image_path=args.retriever_image_path,
                                               code_path=args.retriever_code_path,
                                               top_most=True)
 

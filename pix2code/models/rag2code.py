@@ -194,7 +194,7 @@ class Decoder(nn.Module):
         return output
     
 
-def retrieve_fn(query, index_path, feature_path, code_path, top_most: bool = False):
+def retrieve_fn(query, index_path, image_path, code_path, top_most: bool = False):
     index = faiss.read_index(index_path)
     _, I = index.search(query, k=1 if top_most else 2)
     del index
@@ -203,10 +203,10 @@ def retrieve_fn(query, index_path, feature_path, code_path, top_most: bool = Fal
     docids = I[:, 0]
     with h5py.File(code_path, "r") as h:
         codes = h["code"][docids]
-    features = np.load(feature_path, "r")
-    embeddings = features[docids]
-    del features
-    return embeddings, codes
+    images = np.load(image_path, "r")
+    features = images[docids]
+    del images
+    return features, codes
 
 
 class Rag2Code(nn.Module):
@@ -275,7 +275,9 @@ class Rag2Code(nn.Module):
         ret_memory = rearrange(memory, "b s d -> (b s) d")
 
         embb, code = self.retrieve_fn(ret_memory.detach().cpu().numpy())
-        print(embb, code)
+        # embb (257, 512)
+        # code 
+        print(embb.shape, code.shape)
 
         inp_emb = self.positional_encoding(self.tok_emb(code))
         print(inp_emb.shape)
@@ -283,7 +285,11 @@ class Rag2Code(nn.Module):
         inp_enc = self.txt_encoder(inp_emb)
         print(inp_enc.shape)
 
-        cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
+        doc_scores = torch.bmm(ret_memory, embb.transpose(0, 1))
+        print(doc_scores.shape)
+
+        cap_emb = self.positional_encoding(self.tok_emb(tgt_input),
+                                           src_key_padding_mask=(code == 0))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
                             tgt_key_padding_mask = cap_padding_mask)
 
