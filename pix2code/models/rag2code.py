@@ -204,7 +204,7 @@ def retrieve_fn(query, index_path, image_path, code_path: str):
 
     if code_path.endswith(".npy"):
         codes = np.load(code_path, "r")
-        r["code_embs"] = codes[docids]
+        r["code_embs"] = torch.Tensor(codes[docids])
     else:
         with h5py.File(code_path, "r") as h:
             codes = []
@@ -213,7 +213,7 @@ def retrieve_fn(query, index_path, image_path, code_path: str):
             r["codes"] = torch.stack(codes, dim=0)
     
     images = np.load(image_path, "r")
-    r["image_embs"] = images[docids]
+    r["image_embs"] = torch.Tensor(images[docids])
     del images
     return r
 
@@ -272,6 +272,8 @@ class Rag2Code(nn.Module):
         self.generator = nn.Linear(dim, vocab_size)
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+
+        self.fusing = nn.Linear(dim * 2, dim)
     
     def forward(self, batch):
         img = batch["image"]
@@ -293,7 +295,7 @@ class Rag2Code(nn.Module):
         r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
         # embb (batch_size * 257, 512)
         # code (batch_size * 257, 356)
-        print(r["image_embs"].shape, r["code_embs"].shape)
+        # print(r["image_embs"].shape, r["code_embs"].shape)
         # code = code.to(memory.device)
 
         if self.has_encoder:
@@ -312,12 +314,16 @@ class Rag2Code(nn.Module):
             print("inp_enc_all:", inp_enc_all.shape)
         # else:
             
-
+        r["image_embs"] = r["image_embs"].to(ret_memory.device)
         doc_scores = torch.bmm(ret_memory, r["image_embs"].transpose(0, 1))
         print(doc_scores.shape)
 
+        code_embs = r["code_embs"].to(ret_memory.device)
+        code_embs = rearrange(code_embs, "(b s) d -> b s d", b=batch_size)
+        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
+
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
-        outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
+        outs = self.decoder(cap_emb, fusing_memory, tgt_mask = cap_mask, 
                             tgt_key_padding_mask = cap_padding_mask)
 
         outputs = self.generator(outs)  # (batch, seq_length, num_classes)
