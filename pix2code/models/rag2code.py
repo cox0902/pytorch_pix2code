@@ -202,7 +202,10 @@ def retrieve_fn(query, index_path, image_path, code_path, top_most: bool = False
         docids = I[:, 1]
     docids = I[:, 0]
     with h5py.File(code_path, "r") as h:
-        codes = h["ivs"][docids]
+        sorted_docids = np.sort(docids)
+        sorted_indice = np.argsort(docids)
+        codes = h["ivs"][sorted_docids]
+        codes = codes[sorted_indice]
     images = np.load(image_path, "r")
     features = images[docids]
     del images
