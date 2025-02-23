@@ -196,9 +196,9 @@ class Decoder(nn.Module):
 
 def retrieve_fn(query, index_path, image_path, code_path):
     index = faiss.read_index(index_path)
-    _, I = index.search(query, k=10)
+    _, I = index.search(query, k=1)
     del index
-    docids = I.ravel()
+    docids = I[:, 0]  # .ravel()
     with h5py.File(code_path, "r") as h:
         codes = []
         for docid in docids:
@@ -271,21 +271,25 @@ class Rag2Code(nn.Module):
 
         memory = self.img_encoder(img)
         # print(memory.shape)  # (batch_size, 257, 512)
+        batch_size = memory.size(0)
 
         # ret_memory = rearrange(memory, "b s d -> (b s) d")
         ret_memory = memory[:, 0, :]
 
         embb, code = self.retrieve_fn(ret_memory.detach().cpu().numpy())
-        # embb (16 * 10, 512)
-        # code (16 * 10, 356)
+        # embb (batch_size * 257, 512)
+        # code (batch_size * 257, 356)
         print(embb.shape, code.shape)
-        code = code.to(ret_memory.device)
+        # code = rearrange(code, "(b s) d -> b s d", b=batch_size).to(memory.device)
+        code = code.to(memory.device)
 
-        inp_emb = self.positional_encoding(self.tok_emb(code))
         print(inp_emb.shape)
 
-        inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code == 0))
-        print(inp_enc.shape)
+        inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
+        for i in range(257):
+            inp_emb = self.positional_encoding(self.tok_emb(code[i * batch_size:(i + 1) * batch_size, :]))
+            inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code == 0))
+            inp_enc_all[:, i, :] = inp_enc[:, -1, :]
 
         doc_scores = torch.bmm(ret_memory, embb.transpose(0, 1))
         print(doc_scores.shape)
