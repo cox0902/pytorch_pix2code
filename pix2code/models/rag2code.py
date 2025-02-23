@@ -194,27 +194,38 @@ class Decoder(nn.Module):
         return output
     
 
-def retrieve_fn(query, index_path, image_path, code_path):
+def retrieve_fn(query, index_path, image_path, code_path: str):
     index = faiss.read_index(index_path)
     _, I = index.search(query, k=1)
     del index
     docids = I[:, 0]  # .ravel()
-    with h5py.File(code_path, "r") as h:
-        codes = []
-        for docid in docids:
-            codes.append(torch.LongTensor(h["ivs"][docid]))
+
+    r = {}
+
+    if code_path.endswith(".npy"):
+        codes = np.load(code_path, "r")
+        r["code_embs"] = codes[docids]
+    else:
+        with h5py.File(code_path, "r") as h:
+            codes = []
+            for docid in docids:
+                codes.append(torch.LongTensor(h["ivs"][docid]))
+            r["codes"] = torch.stack(codes, dim=0)
+    
     images = np.load(image_path, "r")
-    features = images[docids]
+    r["image_embs"] = images[docids]
     del images
-    return features, torch.stack(codes, dim=0)
+    return r
 
 
 class Rag2Code(nn.Module):
 
     def __init__(self, 
-                 vocab_size, 
+                 vocab_size,
                  max_len,
                  retrieve_fn,
+                 has_encoder = None, 
+
                  image_size=256, 
                  patch_size=16, 
                  dim=512, 
@@ -226,6 +237,7 @@ class Rag2Code(nn.Module):
                  proof_of_concept: bool = False):
         super().__init__()
 
+        self.has_encoder = (has_encoder == '1')
         self.proof_of_concept = proof_of_concept
 
         self.retrieve_fn = retrieve_fn  # Retriever(retriever_index_path, retriever_database)
@@ -242,8 +254,9 @@ class Rag2Code(nn.Module):
         )
         # self.encoder = torchvision.models.vit_b_16()
 
-        encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
-        self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
+        if self.has_encoder:
+            encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
+            self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
 
         # self.decoder = Decoder(
         #     dim = dim, 
@@ -277,28 +290,30 @@ class Rag2Code(nn.Module):
         ret_memory = rearrange(memory, "b s d -> (b s) d")
         # ret_memory = memory[:, 0, :]
 
-        embb, code = self.retrieve_fn(ret_memory.detach().cpu().numpy())
+        r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
         # embb (batch_size * 257, 512)
         # code (batch_size * 257, 356)
-        print(embb.shape, code.shape)
-        code = rearrange(code, "(b s) d -> b s d", b=batch_size)
+        print(r["image_embs"].shape, r["code_embs"].shape)
         # code = code.to(memory.device)
 
-        inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
-        for i in range(257):
-            batched_code = code[:, i, :].to(memory.device)
-            # print(batched_code.shape)
-            inp_emb = self.positional_encoding(self.tok_emb(batched_code))
-            # print(inp_emb.shape)
-            inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(batched_code == 0))
-            inp_enc_all[:, i, :] = inp_enc[:, -1, :]
-            del batched_code
-            del inp_emb
-            del inp_enc
+        if self.has_encoder:
+            code = rearrange(code, "(b s) d -> b s d", b=batch_size)
+            inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
+            for i in range(257):
+                batched_code = code[:, i, :].to(memory.device)
+                # print(batched_code.shape)
+                inp_emb = self.positional_encoding(self.tok_emb(batched_code))
+                # print(inp_emb.shape)
+                inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(batched_code == 0))
+                inp_enc_all[:, i, :] = inp_enc[:, -1, :]
+                del batched_code
+                del inp_emb
+                del inp_enc
+            print("inp_enc_all:", inp_enc_all.shape)
+        # else:
+            
 
-        print("inp_enc_all:", inp_enc_all.shape)
-
-        doc_scores = torch.bmm(ret_memory, embb.transpose(0, 1))
+        doc_scores = torch.bmm(ret_memory, r["image_embs"].transpose(0, 1))
         print(doc_scores.shape)
 
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
