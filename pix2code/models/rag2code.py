@@ -316,7 +316,7 @@ class Rag2Code(nn.Module):
             
         image_embs = r["image_embs"].to(ret_memory.device)
         image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
-        doc_scores = torch.bmm(ret_memory, image_embs.transpose(1, 2))
+        doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
         print(doc_scores.shape)
 
         code_embs = r["code_embs"].to(ret_memory.device)
