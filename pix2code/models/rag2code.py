@@ -202,15 +202,13 @@ def retrieve_fn(query, index_path, image_path, code_path, top_most: bool = False
         docids = I[:, 1]
     docids = I[:, 0]
     with h5py.File(code_path, "r") as h:
-        sorted_docids = np.sort(docids)
-        sorted_indice = np.argsort(docids)
-        print(sorted_docids)
-        codes = h["ivs"][sorted_docids]
-        codes = codes[sorted_indice]
+        codes = []
+        for docid in docids:
+            codes.append(h["ivs"][docid])
     images = np.load(image_path, "r")
     features = images[docids]
     del images
-    return features, codes
+    return features, torch.stack(codes, dim=0)
 
 
 class Rag2Code(nn.Module):
