@@ -315,7 +315,7 @@ class Rag2Code(nn.Module):
         # else:
             
         r["image_embs"] = r["image_embs"].to(ret_memory.device)
-        doc_scores = torch.bmm(ret_memory, r["image_embs"].transpose(0, 1))
+        doc_scores = torch.bmm(ret_memory, r["image_embs"].transpose(1, 2))
         print(doc_scores.shape)
 
         code_embs = r["code_embs"].to(ret_memory.device)
