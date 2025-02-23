@@ -296,6 +296,8 @@ class Rag2Code(nn.Module):
             del inp_emb
             del inp_enc
 
+        print("inp_enc_all:", inp_enc_all.shape)
+
         doc_scores = torch.bmm(ret_memory, embb.transpose(0, 1))
         print(doc_scores.shape)
 
