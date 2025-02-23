@@ -286,8 +286,9 @@ class Rag2Code(nn.Module):
         inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
         for i in range(257):
             batched_code = code[i * batch_size:(i + 1) * batch_size, :]
+            src_mask, src_padding_mask = create_mask(batched_code)
             inp_emb = self.positional_encoding(self.tok_emb(batched_code))
-            inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(batched_code == 0))
+            inp_enc = self.txt_encoder(inp_emb, src_mask=src_mask, src_key_padding_mask=src_padding_mask)
             inp_enc_all[:, i, :] = inp_enc[:, -1, :]
 
         doc_scores = torch.bmm(ret_memory, embb.transpose(0, 1))
