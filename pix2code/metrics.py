@@ -109,7 +109,7 @@ class Metrics:
         loss = outputs[self.name_loss] if self.name_loss in outputs else None
         if loss is not None:
             if targets is not None:
-                self.loss.update(loss, targets.size(0))
+                self.loss.update(loss, len(targets))
             else:
                 self.loss.update(loss)
 
@@ -541,6 +541,32 @@ class MaskIouCompoundScorer(Scorer):
     
 registered_scores["mics"] = MaskIouCompoundScorer()
 
+
+# ---
+
+class BleuScorer(Scorer):
+
+    def __init__(self, n: int = 4):
+        super().__init__()
+        self.name = f"bleu{n}"
+        self.scorer = BLEUScore(n_gram=n)
+
+    def update(self, outputs):
+        formated_candidates = []
+        formated_references = []
+        for each_source, each_target in zip(outputs["sources"], outputs["targets"]):
+            formated_candidates.append(" ".join([str(id) for id in each_source]))
+            formated_references.append([" ".join([str(id) for id in each_target])])
+        self.scorer.update(formated_candidates, formated_references)
+
+
+registered_scores["bleu1"] = BleuScorer(1)
+registered_scores["bleu2"] = BleuScorer(2)
+registered_scores["bleu3"] = BleuScorer(3)
+registered_scores["bleu4"] = BleuScorer(4)
+
+
+# ---
 
 class AdvMetrics:
 

@@ -2,6 +2,14 @@ from typing import *
 
 from functools import partial
 
+import zss
+import functools
+import collections
+import itertools
+import copy
+# from apted import APTED, Config
+# from networkx import DiGraph, optimize_graph_edit_distance
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -208,8 +216,129 @@ class Rnn(nn.Module):
             # print(y.shape)
             y_hat = reduce(y, "B W H C -> B C", reduction="sum")
             alpha = None
-        # print(y_hat.shape, x_emb.shape)
+        # print(y_hat.shape, x_emb.shape, x)
         return self.rnn_step(torch.cat([x_emb[None], y_hat], dim=1), hidden), alpha
+
+
+
+vocabs = "啊啋啌啍啎問啐啑啒啓啔啕啖啗啘啙啚啛啜啝啞啟啠啡啢啣啤啥啦啧啨啩啪啫啬啭啮啯啰啱啲啳啴啵啶啷啸啹啺啻啼啽啾啿喀喁喂喃善喅喆喇喈喉喊喋喌喍喎喏喐喑喒喓喔喕喖喗喘喙喚喛喜喝喞喟喠喡喢喣"
+
+class Profile(object):
+    """
+        Represents a PQ-Gram Profile, which is a list of PQ-Grams. Each PQ-Gram is represented by a
+        deque. This class relies on the tree.Node classe.
+    """
+
+    def __init__(self, root, p=2, q=3):
+        """
+            Builds the PQ-Gram Profile of the given tree, using the p and q parameters specified.
+            The p and q parameters do not need to be specified, however, different values will have
+            an effect on the distribution of the calculated edit distance. In general, smaller values
+            of p and q are better, though a value of (1, 1) is not recommended, and anything lower is
+            invalid.
+        """
+        super(Profile, self).__init__()
+        ancestors = collections.deque('*'*p, maxlen=p)
+        self.list = list()
+
+        self.profile(root, p, q, ancestors)
+        self.sort()
+
+    def profile(self, root, p, q, ancestors):
+        """
+            Recursively builds the PQ-Gram profile of the given subtree. This method should not be called
+            directly and is called from __init__.
+        """
+        ancestors.append(vocabs[root.iv])
+        siblings = collections.deque('*'*q, maxlen=q)
+
+        if(len(root.children) == 0):
+            self.append(itertools.chain(ancestors, siblings))
+        else:
+            for child in root.children:
+                siblings.append(vocabs[child.iv])
+                self.append(itertools.chain(ancestors, siblings))
+                self.profile(child, p, q, copy.copy(ancestors))
+            for i in range(q-1):
+                siblings.append("*")
+                self.append(itertools.chain(ancestors, siblings))
+
+    def edit_distance(self, other):
+        """
+            Computes the edit distance between two PQ-Gram Profiles. This value should always
+            be between 0.0 and 1.0. This calculation is reliant on the intersection method.
+        """
+        union = len(self) + len(other)
+        return 1.0 - 2.0*(self.intersection(other)/union)
+
+    def intersection(self, other):
+        """
+            Computes the set intersection of two PQ-Gram Profiles and returns the number of
+            elements in the intersection.
+        """
+        intersect = 0.0
+        i = j = 0
+        maxi = len(self)
+        maxj = len(other)
+        while i < maxi and j < maxj:
+            intersect += self.gram_edit_distance(self[i], other[j])
+            if self[i] == other[j]:
+                i += 1
+                j += 1
+            elif self[i] < other[j]:
+                i += 1
+            else:
+                j += 1
+        return intersect
+
+    @functools.lru_cache()
+    def gram_edit_distance(self, gram1, gram2):
+        """
+            Computes the edit distance between two different PQ-Grams. If the two PQ-Grams are the same
+            then the distance is 1.0, otherwise the distance is 0.0. Changing this will break the
+            metrics of the algorithm.
+        """
+        distance = 0.0
+        if gram1 == gram2:
+            distance = 1.0
+        return distance
+
+    def sort(self):
+        """
+            Sorts the PQ-Grams by the concatenation of their labels. This step is automatically performed
+            when a PQ-Gram Profile is created to ensure the intersection algorithm functions properly and
+            efficiently.
+        """
+        self.list.sort(key=lambda x: ''.join(x))
+
+    def append(self, value):
+        self.list.append(tuple(value))
+
+    @functools.lru_cache(maxsize=2)
+    def __len__(self):
+        return len(self.list)
+
+    def __repr__(self):
+        return str(self.list)
+
+    def __str__(self):
+        return str(self.list)
+
+    @functools.lru_cache(maxsize=32)
+    def __getitem__(self, key):
+        return self.list[key]
+
+    def __iter__(self):
+        return iter(self.list)
+
+# class CustomConfig(Config):
+#     def rename(self, node1, node2):
+#         return 1 if node1.iv != node2.iv else 0
+
+#     def children(self, node):
+#         return node.children
+
+
 
 
 class TreeNode:
@@ -252,6 +381,28 @@ class TreeNode:
             each.preorder_walk(walk)
 
     @staticmethod
+    def _make_logit(iv, device = "cpu"):
+        logit = torch.zeros((90, )).to(device)
+        logit[iv] = 1.0
+        return logit
+
+    @staticmethod
+    def _make_logits(n: "TreeNode", ivs: List, device = "cpu"):
+        ivs.append(TreeNode._make_logit(n.iv.item(), device=device))
+        if len(n.children) > 2:
+            ivs.append(TreeNode._make_logit(5, device=device))  # [LB]
+            for each in n.children[1:-1]:
+                TreeNode._make_logits(each, ivs, device=device)
+            ivs.append(TreeNode._make_logit(6, device=device))  # [RB]
+
+    def make_logits(self, device = None):
+        ivs = [TreeNode._make_logit(3, device=device)]  # [START]
+        for each in self.children[1:-1]:
+            TreeNode._make_logits(each, ivs, device=device)
+        ivs.append(TreeNode._make_logit(4, device=device))  # [END]
+        return ivs
+
+    @staticmethod
     def _build_list(n: "TreeNode", ivs: List):
         ivs.append(n.iv.item())
         if len(n.children) > 2:
@@ -260,6 +411,7 @@ class TreeNode:
                 TreeNode._build_list(each, ivs)
             ivs.append(6)  # [RB]
             
+
     def build_list(self) -> List[int]:
         ivs = [3]  # [START]
         for each in self.children[1:-1]:
@@ -318,6 +470,54 @@ class TreeNode:
                              show_score=show_score)
         return dot
     
+
+    @staticmethod
+    def _to_graph(n: "TreeNode", g: "DiGraph"):
+        g.add_node(n.id)
+        for each in n.children:
+            TreeNode._to_graph(each, g)
+            g.add_edge(n.id, each.id)
+
+    def to_graph(self):
+        g = DiGraph()
+        self._to_graph(self, g)
+        return g
+
+    @staticmethod
+    def insert_cost(n, cost):
+        return cost
+    
+    @staticmethod
+    def remove_cost(n, cost):
+        return cost
+    
+    @staticmethod
+    def update_cost(n1, n2, cost):
+        return cost if n1.iv != n2.iv else 0
+    
+    @staticmethod
+    def get_children(n: "TreeNode"):
+        return n.children
+
+    @staticmethod
+    def ted(n1: "TreeNode", n2: "TreeNode"):
+        # return zss.distance(n1, n2,
+        #                     TreeNode.get_children, 
+        #                     insert_cost=partial(TreeNode.insert_cost, cost=1.0),
+        #                     remove_cost=partial(TreeNode.remove_cost, cost=1.0),
+        #                     update_cost=partial(TreeNode.update_cost, cost=1.0))
+        p1 = Profile(n1)
+        p2 = Profile(n2)
+        return p1.edit_distance(p2)
+        # apted = APTED(n1, n2, CustomConfig())
+        # return apted.compute_edit_distance()
+        # g1 = n1.to_graph()
+        # g2 = n2.to_graph()
+        # for v in optimize_graph_edit_distance(g1, g2):
+        #     minv = v
+        # return minv
+
+
     @staticmethod
     def _train(n: "TreeNode", prds: List, tgts: List, fc: "Fusing", rnn_h: Rnn, rnn_v: Rnn, y, 
                topos: Optional[List] = None,
@@ -379,6 +579,11 @@ class TreeNode:
     def _assign_init_hidden_state(n: "TreeNode", hidden_h):
         if n.iv == 3:
             n.hidden_h = hidden_h
+
+    @staticmethod
+    def _mask_iv_(n: "TreeNode"):
+        if n.iv != 3:
+            n.iv_ = None
     
     def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, prds: List, tgts: List, 
               topos: Optional[List] = None, alphas_h: Optional[List] = None, alphas_v: Optional[List] = None,
@@ -396,7 +601,7 @@ class TreeNode:
         else:
             hidden_h = rnn_h.init_hidden_state(y)
             self.preorder_walk_children(partial(TreeNode._assign_init_hidden_state, hidden_h=hidden_h))
-    
+
         children = self.children[1:-1] if topos is not None else self.children[1:]
         for each in children:
             TreeNode._train(each, prds, tgts, fc=fc, rnn_h=rnn_h, rnn_v=rnn_v, y=y, 
@@ -539,6 +744,7 @@ class DecoderWithAttention(nn.Module):
 
     def __init__(self, max_len, attention_dim, embed_dim, decoder_dim, vocab_size, 
                  encoder_dim=2048, dropout=0.5, pos_embed=None, 
+                 reinforce_learning=False,
                  teacher_forcing_decay: float = 1.0,
                  attention_mode: Optional[str] = None,
                  enable_topo_predict=False,
@@ -565,6 +771,7 @@ class DecoderWithAttention(nn.Module):
         self.enable_conditional_init = enable_conditional_init
         self.teacher_forcing_decay = teacher_forcing_decay
         self.teacher_forcing_rate = 1.0
+        self.reinforce_learning = reinforce_learning
 
         if self.attention_mode in [None, "x2"]:
             if not self.double_attention:
@@ -686,7 +893,64 @@ class DecoderWithAttention(nn.Module):
             r["topos"] = torch.stack(topos)
         return r
     
-    def predict(self, encoder_out, max_v_len, max_h_len, verbose=False, quiet: bool = False):
+    def reinforce_train(self, target: "TreeNode", encoder_out, max_v_len, max_h_len):
+        device = encoder_out.device
+
+        log_probs, rewards = [], []
+
+        root = TreeNode(device, 3)
+        root.hidden_v = self.rnn_v.init_hidden_state(encoder_out)
+
+        if not getattr(self.rnn_h, "conditional_init", False):
+            init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
+
+        queue = [root]
+        while len(queue) != 0:
+            parent_node = queue.pop()
+            if parent_node.height >= max_v_len - 2:
+                break
+
+            left_node = parent_node.add_child(device, 3)
+
+            hidden_v, _ = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
+
+            if getattr(self.rnn_h, "conditional_init", False):
+                left_node.hidden_h = self.rnn_h.init_hidden_state(encoder_out, hidden_v[0])
+            else:
+                left_node.hidden_h = init_hidden_h
+
+            for i in range(max_h_len - 1):
+                hidden_h, _ = self.rnn_h.forward(left_node.iv, encoder_out, left_node.hidden_h)
+                logit = self.fc(hidden_h[0], hidden_v[0])
+                probs = torch.softmax(logit, dim=-1)[0]
+                # print(probs.shape)
+                iv = torch.multinomial(probs, 1).item()
+                # print(iv.shape)
+                log_probs.append(torch.log(probs[iv]))
+                # if iv == 0:
+                #     iv = 4
+                if i == max_h_len - 2:
+                    iv = 4
+                ted_before = TreeNode.ted(root, target)
+                # print(ted_before)
+                node = parent_node.add_child(device, iv)
+                node.score = logit
+                # node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
+                ted_after = TreeNode.ted(root, target)
+                # print(ted_before - ted_after)
+                rewards.append(ted_before - ted_after)
+                if iv == 4:
+                    break
+                node.hidden_v = hidden_v
+                node.hidden_h = hidden_h
+                queue.append(node)
+                left_node = node
+
+        # root.cumulate_score()
+        return root, log_probs, rewards
+    
+    def predict(self, encoder_out, max_v_len, max_h_len, 
+                verbose=False, quiet: bool = False):
         if verbose:
             from tqdm.notebook import tqdm
 
@@ -714,7 +978,6 @@ class DecoderWithAttention(nn.Module):
                 left_node.hidden_h = self.rnn_h.init_hidden_state(encoder_out, hidden_v[0])
             else:
                 left_node.hidden_h = init_hidden_h
-
 
             tbar = range(max_h_len - 1)
             if verbose:
@@ -762,7 +1025,8 @@ class ImageCaptionWithBit(nn.Module):
     def __init__(self, 
                  resnet, 
                  vocab_size: int, 
-                 max_len,                  
+                 max_len,              
+                 reinforce_learning = None,
                  teacher_forcing_decay = None,
                  attention_mode = None,
                  enable_topo_predict = None,
@@ -776,6 +1040,7 @@ class ImageCaptionWithBit(nn.Module):
         self.enable_attention_regularization = (enable_attention_regularization == '1')
         self.enable_conditional_init = (enable_conditional_init == '1')
         self.teacher_forcing_decay = (float(teacher_forcing_decay) if teacher_forcing_decay is not None else 1.0)
+        self.reinforce_learning = (reinforce_learning == '1')
 
         print("[params] {}".format(", ".join([
             f"{k}={v}" for k, v in {
@@ -784,7 +1049,8 @@ class ImageCaptionWithBit(nn.Module):
                 "enable_topo_predict": self.enable_topo_predict,
                 "enable_attention_regularization": self.enable_attention_regularization,
                 "enable_conditional_init": self.enable_conditional_init,
-                "teacher_forcing_decay": self.teacher_forcing_decay
+                "teacher_forcing_decay": self.teacher_forcing_decay,
+                "reinforce_learning": self.reinforce_learning
             }.items()
         ])))
 
@@ -797,6 +1063,7 @@ class ImageCaptionWithBit(nn.Module):
                                             decoder_dim=512,
                                             vocab_size=vocab_size,
                                             dropout=0.2,
+                                            reinforce_learning=self.reinforce_learning,
                                             teacher_forcing_decay=self.teacher_forcing_decay,
                                             attention_mode=self.attention_mode,
                                             enable_topo_predict=self.enable_topo_predict,
@@ -804,7 +1071,7 @@ class ImageCaptionWithBit(nn.Module):
         self.criterion = nn.CrossEntropyLoss()
         
     def begin_epoch(self, epoch):
-        if epoch < 10:
+        if epoch < 10 or self.teacher_forcing_decay == 1.0:
             return
         self.decoder.teacher_forcing_rate *= self.decoder.teacher_forcing_decay
         print(f"teacher_forcing_rate = {self.decoder.teacher_forcing_rate}")
@@ -816,12 +1083,60 @@ class ImageCaptionWithBit(nn.Module):
 
         # Forward prop.
         imgs = self.encoder(imgs)
+        batch_size = imgs.size(0)
 
-        outs = self.decoder(imgs, caps, caplens, return_alphas=self.enable_attention_regularization)
-        scores = outs["predict"]
-        targets = outs["targets"]
-        # else:
-        #     scores, targets, alphas = self.decoder(imgs, caps, caplens)
+        if not self.reinforce_learning:
+            outs = self.decoder(imgs, caps, caplens, return_alphas=self.enable_attention_regularization)
+            scores = outs["predict"]
+            targets = outs["targets"]
+
+            loss = self.criterion(scores, targets)
+        else:
+            targets, sources = [], []
+
+            log_probs, rewards = [], []
+            for i in range(batch_size):
+                target = TreeNode.build_tree(caps[i], device="cpu")
+                source, log_prob, reward = self.decoder.reinforce_train(target, imgs[i][None], 
+                                                                        max_v_len=15, max_h_len=10)
+                log_probs.extend(log_prob)
+                rewards.extend(reward)
+
+                targets.append(target.build_list())
+                sources.append(source.build_list())
+
+            # print(log_probs)
+            # print(rewards)
+
+            returns = []
+            G = 0
+            for reward in reversed(rewards):
+                G = reward + 0.99 * G
+                returns.insert(0, G)
+
+            returns = torch.tensor(returns)
+            returns = (returns - returns.mean()) / (returns.std() + 1e-5)
+
+            loss = []
+            for log_prob, R in zip(log_probs, returns):
+                loss.append(-log_prob * R) 
+
+            loss = torch.stack(loss).sum()
+
+            # scores = torch.stack(sources)
+            # sources = torch.LongTensor(sources)
+            # targets = torch.LongTensor(targets)
+
+            # print(loss)
+
+            # print(sources)
+            # print(targets)
+
+            return {
+                "loss": loss,
+                "sources": sources,
+                "targets": targets
+            }
 
         # print(scores.shape, targets.shape)
         # print(alphas.shape)
@@ -835,7 +1150,6 @@ class ImageCaptionWithBit(nn.Module):
         # targets = nn.utils.rnn.pack_padded_sequence(targets, decode_lengths, batch_first=True).data
 
         # Calculate loss
-        loss = self.criterion(scores, targets)
 
         r = {
             "loss": loss, 
