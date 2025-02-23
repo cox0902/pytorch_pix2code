@@ -218,6 +218,13 @@ def retrieve_fn(query, index_path, image_path, code_path: str):
     return r
 
 
+def _mask_pads(target, ll, smooth_obj):
+    pad_mask = target.eq(0)
+    if pad_mask.any():
+        ll.masked_fill_(pad_mask, 0.0)
+        smooth_obj.masked_fill_(pad_mask, 0.0)
+    return ll.squeeze(-1), smooth_obj.squeeze(-1)
+
 class Rag2Code(nn.Module):
 
     def __init__(self, 
@@ -275,6 +282,41 @@ class Rag2Code(nn.Module):
 
         self.fusing = nn.Linear(dim * 2, dim)
     
+    def marginalize(self, seq_logits, doc_scores):
+        # RAG-token marginalization
+        seq_logprobs = nn.functional.log_softmax(seq_logits, dim=-1)  # (b, s, v)
+        doc_logprobs = torch.log_softmax(doc_scores, dim=-1)  # (b, s, s)
+        log_prob_sum = seq_logprobs + doc_logprobs.unsqueeze(-1)  # (b, s, v)
+        return torch.logsumexp(log_prob_sum, dim=-1)
+    
+    def get_nll(self, seq_logits, doc_scores, target, reduce_loss=False, epsilon=0.0, n_docs=None):
+        # shift tokens left
+        target = torch.cat(
+            [target[:, 1:], target.new(target.shape[0], 1).fill_(0)], 1
+        )
+
+        rag_logprobs = self.marginalize(seq_logits, doc_scores, n_docs)
+
+        target = target.unsqueeze(-1)
+        assert target.dim() == rag_logprobs.dim()
+
+        ll = rag_logprobs.gather(dim=-1, index=target)
+        smooth_obj = rag_logprobs.sum(dim=-1, keepdim=True)  # total sum of all (normalised) logits
+        ll, smooth_obj = _mask_pads(target, ll, smooth_obj)
+        ll = ll.sum(1)  # sum over tokens
+        smooth_obj = smooth_obj.sum(1)
+
+        nll_loss = -ll
+        smooth_loss = -smooth_obj
+
+        if reduce_loss:
+            nll_loss = nll_loss.sum()
+            smooth_loss = smooth_loss.sum()
+
+        eps_i = epsilon / rag_logprobs.size(-1)
+        loss = (1.0 - epsilon) * nll_loss + eps_i * smooth_loss
+        return loss
+
     def forward(self, batch):
         img = batch["image"]
         captions = batch["code"].long()
@@ -317,7 +359,7 @@ class Rag2Code(nn.Module):
         image_embs = r["image_embs"].to(ret_memory.device)
         image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
         doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
-        print(doc_scores.shape)
+        # print(doc_scores.shape)  # (batch_size, 257, 257)
 
         code_embs = r["code_embs"].to(ret_memory.device)
         code_embs = rearrange(code_embs, "(b s) d -> b s d", b=batch_size)

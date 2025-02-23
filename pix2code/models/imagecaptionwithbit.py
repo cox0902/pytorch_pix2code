@@ -938,7 +938,7 @@ class DecoderWithAttention(nn.Module):
                 # node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
                 ted_after = TreeNode.ted(root, target)
                 # print(ted_before - ted_after)
-                rewards.append(ted_before - ted_after)
+                rewards.append(ted_after - ted_before)
                 if iv == 4:
                     break
                 node.hidden_v = hidden_v
