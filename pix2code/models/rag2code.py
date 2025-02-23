@@ -198,7 +198,7 @@ def retrieve_fn(query, index_path, image_path, code_path, top_most: bool = False
     index = faiss.read_index(index_path)
     _, I = index.search(query, k=1 if top_most else 2)
     del index
-    if top_most:
+    if not top_most:
         docids = I[:, 1]
     docids = I[:, 0]
     with h5py.File(code_path, "r") as h:
