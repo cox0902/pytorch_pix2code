@@ -283,8 +283,6 @@ class Rag2Code(nn.Module):
         # code = rearrange(code, "(b s) d -> b s d", b=batch_size).to(memory.device)
         code = code.to(memory.device)
 
-        print(inp_emb.shape)
-
         inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
         for i in range(257):
             inp_emb = self.positional_encoding(self.tok_emb(code[i * batch_size:(i + 1) * batch_size, :]))
