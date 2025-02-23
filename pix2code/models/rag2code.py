@@ -204,7 +204,7 @@ def retrieve_fn(query, index_path, image_path, code_path, top_most: bool = False
     with h5py.File(code_path, "r") as h:
         codes = []
         for docid in docids:
-            codes.append(h["ivs"][docid])
+            codes.append(torch.LongTensor(h["ivs"][docid]))
     images = np.load(image_path, "r")
     features = images[docids]
     del images
