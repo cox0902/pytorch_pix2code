@@ -271,10 +271,11 @@ class Rag2Code(nn.Module):
 
         memory = self.img_encoder(img)
         # print(memory.shape)  # (batch_size, 257, 512)
-        batch_size = memory.size(0)
+        
+        batch_size = img.size(0)
 
-        # ret_memory = rearrange(memory, "b s d -> (b s) d")
-        ret_memory = memory[:, 0, :]
+        ret_memory = rearrange(memory, "b s d -> (b s) d")
+        # ret_memory = memory[:, 0, :]
 
         embb, code = self.retrieve_fn(ret_memory.detach().cpu().numpy())
         # embb (batch_size * 257, 512)
