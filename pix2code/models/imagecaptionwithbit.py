@@ -2,7 +2,7 @@ from typing import *
 
 from functools import partial
 
-# import zss
+import zss
 import functools
 import collections
 import itertools
@@ -345,7 +345,7 @@ class TreeNode:
     
     def __init__(self, device, iv: Union[int, torch.Tensor], parent: "TreeNode" = None):
         self.id = hex(id(self))
-        self.iv = torch.tensor(iv).to(device) if type(iv) == int else iv.clone().to(device)
+        self.set_iv(iv, device=device)
         self.iv_ = self.iv
 
         # print(self.iv, device, self.iv.device)
@@ -360,6 +360,9 @@ class TreeNode:
         self.height = 1 if parent is None else parent.height + 1
         self.score = 0
         self.count = 1
+
+    def set_iv(self, iv, device):
+        self.iv = torch.tensor(iv).to(device) if type(iv) == int else iv.clone().to(device)
 
     def add_child(self, device, iv) -> "TreeNode":
         node = TreeNode(device, iv, self)
@@ -893,13 +896,22 @@ class DecoderWithAttention(nn.Module):
             r["topos"] = torch.stack(topos)
         return r
     
-    def reinforce_train(self, target: "TreeNode", encoder_out, max_v_len, max_h_len):
+    def reinforce_train(self, target: "TreeNode", encoder_out, max_v_len, max_h_len, max_len):
         device = encoder_out.device
+
+        self.eval()
+        with torch.no_grad():
+            base = self.predict(encoder_out, max_v_len=max_v_len, max_h_len=max_h_len, max_len=max_len, quiet=True)
+            # base.cumulate_score()
+            # print(base.count, count)
+            ted_base = TreeNode.ted(base, target)
+        self.train()
 
         log_probs, rewards = [], []
 
         root = TreeNode(device, 3)
         root.hidden_v = self.rnn_v.init_hidden_state(encoder_out)
+        count = 1
 
         if not getattr(self.rnn_h, "conditional_init", False):
             init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
@@ -907,10 +919,14 @@ class DecoderWithAttention(nn.Module):
         queue = [root]
         while len(queue) != 0:
             parent_node = queue.pop()
-            if parent_node.height >= max_v_len - 2:
+            if parent_node.height >= max_v_len - 2 or count >= max_len:
                 break
 
             left_node = parent_node.add_child(device, 3)
+            count += 1
+
+            if count >= max_len:
+                break
 
             hidden_v, _ = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
 
@@ -931,15 +947,15 @@ class DecoderWithAttention(nn.Module):
                 #     iv = 4
                 if i == max_h_len - 2:
                     iv = 4
-                ted_before = TreeNode.ted(root, target)
                 # print(ted_before)
                 node = parent_node.add_child(device, iv)
                 node.score = logit
+                count += 1
                 # node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
-                ted_after = TreeNode.ted(root, target)
-                # print(ted_before - ted_after)
-                rewards.append(ted_after - ted_before)
-                if iv == 4:
+                ted = TreeNode.ted(root, target)
+                # print(-(ted - ted_base))
+                rewards.append(-(ted - ted_base))
+                if iv == 4 or count >= max_len:
                     break
                 node.hidden_v = hidden_v
                 node.hidden_h = hidden_h
@@ -950,6 +966,7 @@ class DecoderWithAttention(nn.Module):
         return root, log_probs, rewards
     
     def predict(self, encoder_out, max_v_len, max_h_len, 
+                max_len = None, cumulate_score = False,
                 verbose=False, quiet: bool = False):
         if verbose:
             from tqdm.notebook import tqdm
@@ -958,6 +975,7 @@ class DecoderWithAttention(nn.Module):
 
         root = TreeNode(device, 3)
         root.hidden_v = self.rnn_v.init_hidden_state(encoder_out)
+        count = 1
 
         if not getattr(self.rnn_h, "conditional_init", False):
             init_hidden_h = self.rnn_h.init_hidden_state(encoder_out)
@@ -967,10 +985,20 @@ class DecoderWithAttention(nn.Module):
             parent_node = queue.pop()
             if parent_node.height >= max_v_len - 2:
                 if not quiet:
-                    print("max height exceed!")
+                    print("max height exceeded!")
+                break
+            if count >= max_len:
+                if not quiet:
+                    print("max length exceeded!")
                 break
 
             left_node = parent_node.add_child(device, 3)
+            count += 1
+
+            if count >= max_len:
+                if not quiet:
+                    print("max length exceeded!")
+                break
 
             hidden_v, _ = self.rnn_v.forward(parent_node.iv, encoder_out, parent_node.hidden_v)
 
@@ -993,10 +1021,15 @@ class DecoderWithAttention(nn.Module):
                 if i == max_h_len - 2:
                     iv = 4
                     if not quiet:
-                        print("max width exceed!")
+                        print("max width exceeded!")
                 node = parent_node.add_child(device, iv)
                 node.score = nn.functional.log_softmax(logit, dim=-1)[0, iv]
+                count += 1
                 if iv == 4:
+                    break
+                if count >= max_len:
+                    if not quiet:
+                        print("max length exceeded!")
                     break
                 node.hidden_v = hidden_v
                 node.hidden_h = hidden_h
@@ -1008,7 +1041,8 @@ class DecoderWithAttention(nn.Module):
             # else:
                 # print("max width exceed!")
 
-        root.cumulate_score()
+        if cumulate_score:
+            root.cumulate_score()
         return root
     
     def predict_score(self, encoder_out, tree: "TreeNode", verbose=False):
@@ -1055,6 +1089,7 @@ class ImageCaptionWithBit(nn.Module):
         ])))
 
         self.vocab_size = vocab_size
+        self.max_len = max_len
         self.alpha_c = 1.
         self.encoder = Encoder(resnet)
         self.decoder = DecoderWithAttention(max_len,
@@ -1098,7 +1133,8 @@ class ImageCaptionWithBit(nn.Module):
             for i in range(batch_size):
                 target = TreeNode.build_tree(caps[i], device="cpu")
                 source, log_prob, reward = self.decoder.reinforce_train(target, imgs[i][None], 
-                                                                        max_v_len=15, max_h_len=10)
+                                                                        max_v_len=15, max_h_len=10,
+                                                                        max_len=self.max_len)
                 log_probs.extend(log_prob)
                 rewards.extend(reward)
 
@@ -1203,7 +1239,9 @@ class ImageCaptionWithBit(nn.Module):
             if verbose:
                 print(f"Sample {i} =>")
             tree = self.decoder.predict(encoder_out[i][None], 
-                                        max_v_len, max_h_len, verbose=verbose, quiet=quiet)  # (batch_size, decoder_dim)
+                                        max_v_len, max_h_len,
+                                        max_len=self.max_len, 
+                                        verbose=verbose, quiet=quiet)  # (batch_size, decoder_dim)
             trees.append(tree)
 
         return trees
