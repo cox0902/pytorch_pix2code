@@ -246,14 +246,14 @@ class SimpleMulticlassMetrics(Metrics):
 
 class MulticlassMetrics(SimpleMulticlassMetrics):
 
-    def __init__(self, num_classes: int):
+    def __init__(self, num_classes: int, scorer: Type[Metric] = MulticlassAUROC):
         super().__init__(num_classes, {
             "Acc": MulticlassAccuracy(num_classes=num_classes),
             "Pre": MulticlassPrecision(num_classes=num_classes), 
             "Rec": MulticlassRecall(num_classes=num_classes),
             "F-1": MulticlassF1Score(num_classes=num_classes),
             "AUC": MulticlassAUROC(num_classes=num_classes) 
-        })
+        }, scorer)
 
 
 class SimpleLossMetrics(Metrics):
