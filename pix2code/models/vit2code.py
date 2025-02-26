@@ -194,7 +194,7 @@ class Decoder(nn.Module):
     
 
 class Vit2Code(nn.Module):
-    def __init__(self, vocab_size=90, image_size=256, patch_size=16, dim=512, num_layer=6,
+    def __init__(self, vocab_size, max_len, image_size=256, patch_size=16, dim=512, num_layer=6,
                  num_head=8, mlp_dim=1024, dropout=0.1, emb_dropout=0.1):
         super().__init__()
 
