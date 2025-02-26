@@ -194,8 +194,8 @@ class Decoder(nn.Module):
     
 
 class Vit2Code(nn.Module):
-    def __init__(self, image_size=256, patch_size=16, dim=512, num_layer=6,
-                 num_head=8, num_classes=90, mlp_dim=1024, dropout=0.1, emb_dropout=0.1):
+    def __init__(self, vocab_size=90, image_size=256, patch_size=16, dim=512, num_layer=6,
+                 num_head=8, mlp_dim=1024, dropout=0.1, emb_dropout=0.1):
         super().__init__()
 
         self.encoder = ViT(
@@ -215,9 +215,9 @@ class Vit2Code(nn.Module):
             num_head = num_head, 
             num_layers = num_layer
         )
-        self.tok_emb = TokenEmbedding(num_classes, dim)
+        self.tok_emb = TokenEmbedding(vocab_size, dim)
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
-        self.generator = nn.Linear(dim, num_classes)
+        self.generator = nn.Linear(dim, vocab_size)
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
     
@@ -258,6 +258,18 @@ class Vit2Code(nn.Module):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
                             tgt_mask = cap_mask)
 
+    def predict_init(self, images):
+        memory = self.encoder(images)
+        return {
+            "memory": memory
+        }
+    
+    def predict_next(self, inputs, context):
+        cap_emb = self.positional_encoding(self.tok_emb(inputs))
+        outs = self.decoder(cap_emb, context["memory"])
+        scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
+        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
+        return predicts, scores, {}
 
 # def generate_square_subsequent_mask(sz, device='cpu'):
 #     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)
