@@ -567,6 +567,8 @@ class BleuScorer(Scorer):
         formated_candidates = []
         formated_references = []
         for each_source, each_target in zip(outputs["sources"], outputs["targets"]):
+            print(each_source)
+            print(each_target)
             formated_candidates.append(" ".join([str(id) for id in each_source]))
             formated_references.append([" ".join([str(id) for id in each_target])])
         self.scorer.update(formated_candidates, formated_references)

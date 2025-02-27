@@ -588,7 +588,7 @@ class TreeNode:
         if n.iv != 3:
             n.iv_ = None
     
-    def train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, prds: List, tgts: List, 
+    def  train(self, fc, rnn_h: Rnn, rnn_v: Rnn, y, prds: List, tgts: List, 
               topos: Optional[List] = None, alphas_h: Optional[List] = None, alphas_v: Optional[List] = None,
               teacher_forcing_rate = 1.0):
 
@@ -1181,6 +1181,7 @@ class ImageCaptionWithBit(nn.Module):
         r = {
             "loss": loss, 
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
+            # "sources": torch.argmax(torch.nn.functional.softmax(scores, dim=-1), dim=-1),
             "targets": targets
         }
 
