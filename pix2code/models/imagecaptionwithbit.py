@@ -1111,6 +1111,43 @@ class ImageCaptionWithBit(nn.Module):
         self.decoder.teacher_forcing_rate *= self.decoder.teacher_forcing_decay
         print(f"teacher_forcing_rate = {self.decoder.teacher_forcing_rate}")
 
+    def end_batch(self, outputs, batch, optimizer):
+        optimizer.zero_grad()
+
+        imgs = batch["image"]
+        caps = batch["code"].long()
+        batch_size = imgs.size(0)
+
+        log_probs, rewards = [], []
+        for i in range(batch_size):
+            target = TreeNode.build_tree(caps[i], device="cpu")
+            _, log_prob, reward = self.decoder.reinforce_train(target, imgs[i][None], 
+                                                               max_v_len=15, max_h_len=10,
+                                                               max_len=self.max_len)
+            log_probs.extend(log_prob)
+            rewards.extend(reward)
+
+        returns = []
+        G = 0
+        for reward in reversed(rewards):
+            G = reward + 0.99 * G
+            returns.insert(0, G)
+
+        returns = torch.tensor(returns)
+        returns = (returns - returns.mean()) / (returns.std() + 1e-5)
+
+        loss = []
+        for log_prob, R in zip(log_probs, returns):
+            loss.append(-log_prob * R) 
+
+        loss = torch.stack(loss).sum()
+        loss.backward()
+
+        optimizer.step()
+
+        outputs["loss/rf"] = loss.item()
+        return outputs
+
     def forward(self, batch):
         imgs = batch["image"]
         caps = batch["code"].long()
@@ -1118,61 +1155,13 @@ class ImageCaptionWithBit(nn.Module):
 
         # Forward prop.
         imgs = self.encoder(imgs)
-        batch_size = imgs.size(0)
+        # batch_size = imgs.size(0)
 
-        if not self.reinforce_learning:
-            outs = self.decoder(imgs, caps, caplens, return_alphas=self.enable_attention_regularization)
-            scores = outs["predict"]
-            targets = outs["targets"]
+        outs = self.decoder(imgs, caps, caplens, return_alphas=self.enable_attention_regularization)
+        scores = outs["predict"]
+        targets = outs["targets"]
 
-            loss = self.criterion(scores, targets)
-        else:
-            targets, sources = [], []
-
-            log_probs, rewards = [], []
-            for i in range(batch_size):
-                target = TreeNode.build_tree(caps[i], device="cpu")
-                source, log_prob, reward = self.decoder.reinforce_train(target, imgs[i][None], 
-                                                                        max_v_len=15, max_h_len=10,
-                                                                        max_len=self.max_len)
-                log_probs.extend(log_prob)
-                rewards.extend(reward)
-
-                targets.append(target.build_list())
-                sources.append(source.build_list())
-
-            # print(log_probs)
-            # print(rewards)
-
-            returns = []
-            G = 0
-            for reward in reversed(rewards):
-                G = reward + 0.99 * G
-                returns.insert(0, G)
-
-            returns = torch.tensor(returns)
-            returns = (returns - returns.mean()) / (returns.std() + 1e-5)
-
-            loss = []
-            for log_prob, R in zip(log_probs, returns):
-                loss.append(-log_prob * R) 
-
-            loss = torch.stack(loss).sum()
-
-            # scores = torch.stack(sources)
-            # sources = torch.LongTensor(sources)
-            # targets = torch.LongTensor(targets)
-
-            # print(loss)
-
-            # print(sources)
-            # print(targets)
-
-            return {
-                "loss": loss,
-                "sources": sources,
-                "targets": targets
-            }
+        loss = self.criterion(scores, targets)
 
         # print(scores.shape, targets.shape)
         # print(alphas.shape)

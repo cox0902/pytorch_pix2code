@@ -356,9 +356,9 @@ class Rag2Code(nn.Module):
             print("inp_enc_all:", inp_enc_all.shape)
         # else:
             
-        image_embs = r["image_embs"].to(ret_memory.device)
-        image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
-        doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
+        # image_embs = r["image_embs"].to(ret_memory.device)
+        # image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
+        # doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
         # print(doc_scores.shape)  # (batch_size, 257, 257)
 
         code_embs = r["code_embs"].to(ret_memory.device)
@@ -390,6 +390,22 @@ class Rag2Code(nn.Module):
     def decode(self, caption, memory, cap_mask):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
                             tgt_mask = cap_mask)
+    
+    def predict_init(self, images):
+        memory = self.encoder(images)
+        return {
+            "memory": memory
+        }
+
+    def predict_next(self, inputs, context):
+
+        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
+
+        cap_emb = self.positional_encoding(self.tok_emb(inputs))
+        outs = self.decoder(cap_emb, fusing_memory)
+        scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
+        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
+        return predicts, scores, {}
 
 
 # def generate_square_subsequent_mask(sz, device='cpu'):

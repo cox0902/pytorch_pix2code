@@ -252,6 +252,10 @@ class Trainer:
             batch = self.to_device(batch)
             # targets = batch["target"]
 
+            begin_batch = getattr(self.get_inner_model(), "begin_batch", None)
+            if begin_batch is not None:
+                begin_batch(batch)
+
             with autocast(enabled=self.scaler is not None):  # "cuda", 
                 outputs = self.model(batch)
 
@@ -274,6 +278,10 @@ class Trainer:
                 self.optimizer.step()
 
             assert not np.isnan(outputs["loss"].item()), 'Model diverged with loss = NaN'
+
+            end_batch = getattr(self.get_inner_model(), "end_batch", None)
+            if end_batch is not None:
+                outputs = end_batch(outputs, batch, self.optimizer)
             
             if self.ema_model is not None:
                 self.ema_model.update_parameters(self.model)
