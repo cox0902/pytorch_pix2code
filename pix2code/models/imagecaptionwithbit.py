@@ -1118,6 +1118,8 @@ class ImageCaptionWithBit(nn.Module):
         caps = batch["code"].long()
         batch_size = imgs.size(0)
 
+        imgs = self.encoder(imgs)
+
         log_probs, rewards = [], []
         for i in range(batch_size):
             target = TreeNode.build_tree(caps[i], device="cpu")
