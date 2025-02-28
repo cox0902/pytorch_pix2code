@@ -1,6 +1,3 @@
-import faiss
-import h5py
-import numpy as np
 import math
 import copy
 import torch
