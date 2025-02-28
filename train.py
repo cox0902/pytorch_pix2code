@@ -64,6 +64,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-add-channel", action="store_true", default=False)
     parser.add_argument("--has-tree", action="store_true", default=False)
     parser.add_argument("--mask-tree", action="store_true", default=False)
+    parser.add_argument("--force-valid", action="store_true", default=False)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -288,6 +289,8 @@ def main(args):
                                     batch_size=args.batch_size, 
                                     shuffle=True, 
                                     pin_memory=args.pin_memory)
+        elif args.force_valid:
+            valid_loader = train_loader
         else:
             valid_loader = None
 
