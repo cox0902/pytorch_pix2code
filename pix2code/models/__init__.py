@@ -37,6 +37,9 @@ def get_model_class_by_name(name):
     elif name == "Rag2Code".lower():
         from .rag2code import Rag2Code
         return Rag2Code
+    elif name == "vit2tree":
+        from .vit2tree import Vit2Tree
+        return Vit2Tree
     else:
         return None
 

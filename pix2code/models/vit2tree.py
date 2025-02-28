@@ -1,10 +1,11 @@
+import faiss
+import h5py
+import numpy as np
 import math
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import TransformerDecoderLayer
-import torchvision
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
@@ -169,7 +170,7 @@ class Decoder(nn.Module):
 
     def __init__(self, dim, num_head, num_layers, norm=None):
         super().__init__()
-        decoder_layer = TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
+        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
         torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for i in range(num_layers)])
         self.num_layers = num_layers
@@ -193,12 +194,34 @@ class Decoder(nn.Module):
         return output
     
 
-class Vit2Code(nn.Module):
-    def __init__(self, vocab_size, max_len, image_size=256, patch_size=16, dim=512, num_layer=6,
-                 num_head=8, mlp_dim=1024, dropout=0.1, emb_dropout=0.1):
+# def cross_attn(query, key, value):
+#     # query: tensor of shape (batch_size, query_len, embed_dim)
+#     # key, value: tensors of shape (batch_size, key_len, embed_dim)
+    
+#     scores = torch.matmul(query, key.transpose(-2, -1)) / (query.size(-1) ** 0.5)
+#     attn_weights = torch.softmax(scores, dim=-1)
+#     return torch.matmul(attn_weights, value)
+
+
+class Vit2Tree(nn.Module):
+
+    def __init__(self, 
+                 vocab_size,
+                 max_len,
+                 image_size=256, 
+                 patch_size=16, 
+                 dim=512, 
+                 num_layer=6,
+                 num_head=8, 
+                 mlp_dim=1024, 
+                 dropout=0.1, 
+                 emb_dropout=0.1,
+                 proof_of_concept: bool = False):
         super().__init__()
 
-        self.encoder = ViT(
+        self.proof_of_concept = proof_of_concept
+
+        self.img_encoder = ViT(
             image_size = image_size,
             patch_size = patch_size,
             dim = dim,
@@ -210,38 +233,63 @@ class Vit2Code(nn.Module):
         )
         # self.encoder = torchvision.models.vit_b_16()
 
-        self.decoder = Decoder(
-            dim = dim, 
-            num_head = num_head, 
-            num_layers = num_layer
-        )
+        encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
+        self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
+
+        # self.decoder = Decoder(
+        #     dim = dim, 
+        #     num_head = num_head, 
+        #     num_layers = num_layer
+        # )
+
+        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first=True)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layer)
+
         self.tok_emb = TokenEmbedding(vocab_size, dim)
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
         self.generator = nn.Linear(dim, vocab_size)
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+
+        self.fusing = nn.Linear(dim * 2, dim)
     
     def forward(self, batch):
         img = batch["image"]
-        captions = batch["code"].long()
-        caplens = batch["code_len"]
+        code = batch["code"].long()
+        code_cond = batch["code_cond"].long()
+        code_lens = batch["code_len"]
 
-        tgt_input = captions[:, :-1]
+        tgt_input = code[:, :-1]
 
         cap_mask, cap_padding_mask = create_mask(tgt_input)
 
-        memory = self.encoder(img)
-        # print(memory.shape)  # (batch_size, 257, 512)
+        memory = self.img_encoder(img)
+        # print(memory.shape)
+        
+        # batch_size = img.size(0)
+
+        inp_emb = self.positional_encoding(self.tok_emb(code_cond))
+        inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code_cond == 0))
+        # print(inp_enc.shape)
+        # else:
+
+        cross_attn = nn.MultiheadAttention(embed_dim=512, num_heads=8, batch_first=True)
+        vit_to_text, _ = cross_attn(query=inp_enc, key=memory, value=memory)
+        text_to_vit, _ = cross_attn(query=memory, key=inp_enc, value=inp_enc)
+
+        # print(vit_to_text.shape, text_to_vit.shape)
+        memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
                             tgt_key_padding_mask = cap_padding_mask)
 
         outputs = self.generator(outs)  # (batch, seq_length, num_classes)
 
-        tgt_out = captions[:, 1:]
+        tgt_out = code[:, 1:]
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
 
-        decode_lengths = (caplens - 1).cpu()
+        decode_lengths = (code_lens - 1).cpu()
         scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
         targets = nn.utils.rnn.pack_padded_sequence(tgt_out, decode_lengths, batch_first=True, enforce_sorted=False).data
 
@@ -252,27 +300,28 @@ class Vit2Code(nn.Module):
         }
     
     def encode(self, img):
-        return self.encoder(img)
+        return self.img_encoder(img)
 
     def decode(self, caption, memory, cap_mask):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
                             tgt_mask = cap_mask)
-
+    
     def predict_init(self, images):
         memory = self.encoder(images)
         return {
             "memory": memory
         }
-    
+
     def predict_next(self, inputs, context):
-        # print(inputs.shape)
-        inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
+
+        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
 
         cap_emb = self.positional_encoding(self.tok_emb(inputs))
-        outs = self.decoder(cap_emb, context["memory"], tgt_mask=inp_msk)
+        outs = self.decoder(cap_emb, fusing_memory)
         scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         return predicts, scores, {}
+
 
 # def generate_square_subsequent_mask(sz, device='cpu'):
 #     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)

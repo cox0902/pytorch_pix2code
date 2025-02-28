@@ -30,6 +30,18 @@ def make_mask(rect):
     return mask
 
 
+def find_rb(code, lb: int) -> int:
+    queue = 0
+    for i, each in enumerate(code[lb + 1:]):
+        if each == 6:
+            if queue == 0:
+                break
+            queue -= 1
+        elif each == 5:
+            queue += 1
+    return lb + i + 1
+
+
 class ImageCodeDataset(Dataset):
 
     @staticmethod
@@ -44,7 +56,9 @@ class ImageCodeDataset(Dataset):
 
     def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
                  label_trans = None, multi_label: str = None, label_aug_prob: float = None,
-                 has_comma: bool = True, has_rect: bool = False, mask_rect: bool = False, has_tree: bool = False,
+                 has_comma: bool = True, 
+                 has_rect: bool = False, mask_rect: bool = False, 
+                 has_tree: bool = False, mask_tree: bool = False,
                  force_add_channel: bool = False):
         super().__init__()
         self.image_path = image_path
@@ -79,12 +93,15 @@ class ImageCodeDataset(Dataset):
         self.is_short = self.images.shape[0] < self.codes.shape[0]
         self.is_large = self.images.shape[0] > self.codes.shape[0]
 
-        self.idx = self.hc["idx"] if has_rect else None
         self.ids = self.hc["ids"] if has_rect else None
-        self.pid = self.hc["pid"] if has_rect else None
-        self.piv = self.hc["piv"] if has_rect else None
+
+        if self.is_short or self.is_large:
+            self.idx = self.hc["idx"] if has_rect else None
+            self.pid = self.hc["pid"] if has_rect else None
+            self.piv = self.hc["piv"] if has_rect else None
 
         self.has_tree = has_tree
+        self.mask_tree = mask_tree
         
     def summary(self, header: Optional[str] = None):
         print()
@@ -277,6 +294,37 @@ class ImageCodeDataset(Dataset):
             item["pre_ivs_src"] = self.hc["pre_ivs_src"][code_idx]
             item["pre_ivs_tgt"] = self.hc["pre_ivs_tgt"][code_idx]
             item["pre_les"] = self.hc["pre_les"][code_idx]
+
+        if self.mask_tree:
+            code = item["code"]
+            code_len = item["code_len"]
+
+            lb_idx = np.random.choice(np.where(code == 5)[0])
+            rb_idx = find_rb(code, lb_idx)
+            lb_idx, rb_idx
+
+            cond_masked = np.zeros_like(code)
+            cond_masked[:lb_idx] = code[:lb_idx]
+            cond_masked[lb_idx] = 2
+            cond_masked[lb_idx + 1:lb_idx + code_len - rb_idx] = code[rb_idx + 1:code_len]
+
+            code_masked = np.zeros_like(code)
+            code_masked[0] = 3
+            i = 1
+            j = lb_idx + 1
+            while j < rb_idx:
+                if code[j] == 5:
+                    j = find_rb(code, j)
+                    code_masked[i] = 1
+                else:
+                    code_masked[i] = code[j]
+                i += 1
+                j += 1
+            code_masked[i] = 4
+
+            item["code"] = code_masked
+            item["code_cond"] = cond_masked
+            item["code_len"] = i + 1
 
         return item
     

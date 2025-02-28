@@ -63,6 +63,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label-aug-prob", type=float)
     parser.add_argument("--force-add-channel", action="store_true", default=False)
     parser.add_argument("--has-tree", action="store_true", default=False)
+    parser.add_argument("--mask-tree", action="store_true", default=False)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -256,6 +257,7 @@ def main(args):
                                     has_rect=has_rect, 
                                     mask_rect=mask_rect,
                                     has_tree=args.has_tree,
+                                    mask_tree=args.mask_tree,
                                     force_add_channel=args.force_add_channel)
         train_set.normalize_rect = norm_rect
         train_set.summary("> Train set")
@@ -278,6 +280,7 @@ def main(args):
                                         has_rect=has_rect, 
                                         mask_rect=mask_rect,
                                         has_tree=args.has_tree,
+                                        mask_tree=args.mask_tree,
                                         force_add_channel=args.force_add_channel)
             valid_set.normalize_rect = norm_rect
             valid_set.summary("> Valid set")
@@ -379,6 +382,7 @@ def main(args):
                                     has_rect=has_rect, 
                                     mask_rect=mask_rect,
                                     has_tree=args.has_tree,
+                                    mask_tree=args.mask_tree,
                                     force_add_channel=args.force_add_channel)
         test_set.normalize_rect = norm_rect
         test_set.summary("> Test set")
