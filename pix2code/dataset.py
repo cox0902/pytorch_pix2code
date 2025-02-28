@@ -299,32 +299,40 @@ class ImageCodeDataset(Dataset):
             code = item["code"]
             code_len = item["code_len"]
 
-            lb_idx = np.random.choice(np.where(code == 5)[0])
-            rb_idx = find_rb(code, lb_idx)
-            lb_idx, rb_idx
+            lbs = np.where(code == 5)[0]
+            if len(lbs) == 0:
+                cond_masked = np.zeros_like(code)
+                cond_masked[0] = 3
+                cond_masked[1] = 2
+                cond_masked[2] = 4
+                item["code_cond"] = cond_masked
+            else:
+                lb_idx = np.random.choice(lbs)
+                rb_idx = find_rb(code,  lb_idx)
+                lb_idx, rb_idx
 
-            cond_masked = np.zeros_like(code)
-            cond_masked[:lb_idx] = code[:lb_idx]
-            cond_masked[lb_idx] = 2
-            cond_masked[lb_idx + 1:lb_idx + code_len - rb_idx] = code[rb_idx + 1:code_len]
+                cond_masked = np.zeros_like(code)
+                cond_masked[:lb_idx] = code[:lb_idx]
+                cond_masked[lb_idx] = 2
+                cond_masked[lb_idx + 1:lb_idx + code_len - rb_idx] = code[rb_idx + 1:code_len]
 
-            code_masked = np.zeros_like(code)
-            code_masked[0] = 3
-            i = 1
-            j = lb_idx + 1
-            while j < rb_idx:
-                if code[j] == 5:
-                    j = find_rb(code, j)
-                    code_masked[i] = 1
-                else:
-                    code_masked[i] = code[j]
-                i += 1
-                j += 1
-            code_masked[i] = 4
+                code_masked = np.zeros_like(code)
+                code_masked[0] = 3
+                i = 1
+                j = lb_idx + 1
+                while j < rb_idx:
+                    if code[j] == 5:
+                        j = find_rb(code, j)
+                        code_masked[i] = 1
+                    else:
+                        code_masked[i] = code[j]
+                    i += 1
+                    j += 1
+                code_masked[i] = 4
 
-            item["code"] = code_masked
-            item["code_cond"] = cond_masked
-            item["code_len"] = i + 1
+                item["code"] = code_masked
+                item["code_cond"] = cond_masked
+                item["code_len"] = i + 1
 
         return item
     

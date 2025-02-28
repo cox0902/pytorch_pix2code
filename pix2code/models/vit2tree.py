@@ -251,7 +251,9 @@ class Vit2Tree(nn.Module):
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
-        self.fusing = nn.Linear(dim * 2, dim)
+        # self.fusing = nn.Linear(dim * 2, dim)
+        self.cross_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_head, batch_first=True)
+
     
     def forward(self, batch):
         img = batch["image"]
@@ -273,9 +275,8 @@ class Vit2Tree(nn.Module):
         # print(inp_enc.shape)
         # else:
 
-        cross_attn = nn.MultiheadAttention(embed_dim=512, num_heads=8, batch_first=True)
-        vit_to_text, _ = cross_attn(query=inp_enc, key=memory, value=memory)
-        text_to_vit, _ = cross_attn(query=memory, key=inp_enc, value=inp_enc)
+        vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
+        text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
 
         # print(vit_to_text.shape, text_to_vit.shape)
         memory = torch.cat([vit_to_text, text_to_vit], dim=1)
