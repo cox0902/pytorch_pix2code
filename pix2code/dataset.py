@@ -102,6 +102,10 @@ class ImageCodeDataset(Dataset):
 
         self.has_tree = has_tree
         self.mask_tree = mask_tree
+
+        if self.mask_tree:
+            self.idx = self.hc["idx"] if "idx" in self.hc.keys() else None
+            self.cvs = self.hc["cvs"] if "cvs" in self.hc.keys() else None
         
     def summary(self, header: Optional[str] = None):
         print()
@@ -125,6 +129,8 @@ class ImageCodeDataset(Dataset):
         code_idx = self.__idx(index)
         img_idx = code_idx
         if self.has_rect and (self.is_short or self.is_large):
+            img_idx = self.idx[img_idx]
+        if self.mask_tree and self.idx is not None:
             img_idx = self.idx[img_idx]
 
         image = torch.from_numpy(self.images[img_idx])
@@ -296,43 +302,46 @@ class ImageCodeDataset(Dataset):
             item["pre_les"] = self.hc["pre_les"][code_idx]
 
         if self.mask_tree:
-            code = item["code"]
-            code_len = item["code_len"]
-
-            lbs = np.where(code == 5)[0]
-            if len(lbs) == 0:
-                cond_masked = np.zeros_like(code)
-                cond_masked[0] = 3
-                cond_masked[1] = 2
-                cond_masked[2] = 4
-                item["code_cond"] = cond_masked
+            if self.cvs is not None:
+                item["code_cond"] = self.cvs[code_idx]
             else:
-                lb_idx = np.random.choice(lbs)
-                rb_idx = find_rb(code,  lb_idx)
-                lb_idx, rb_idx
+                code = item["code"]
+                code_len = item["code_len"]
 
-                cond_masked = np.zeros_like(code)
-                cond_masked[:lb_idx] = code[:lb_idx]
-                cond_masked[lb_idx] = 2
-                cond_masked[lb_idx + 1:lb_idx + code_len - rb_idx] = code[rb_idx + 1:code_len]
+                lbs = np.where(code == 5)[0]
+                if len(lbs) == 0:
+                    cond_masked = np.zeros_like(code)
+                    cond_masked[0] = 3
+                    cond_masked[1] = 2
+                    cond_masked[2] = 4
+                    item["code_cond"] = cond_masked
+                else:
+                    lb_idx = np.random.choice(lbs)
+                    rb_idx = find_rb(code,  lb_idx)
+                    lb_idx, rb_idx
 
-                code_masked = np.zeros_like(code)
-                code_masked[0] = 3
-                i = 1
-                j = lb_idx + 1
-                while j < rb_idx:
-                    if code[j] == 5:
-                        j = find_rb(code, j)
-                        code_masked[i] = 1
-                    else:
-                        code_masked[i] = code[j]
-                    i += 1
-                    j += 1
-                code_masked[i] = 4
+                    cond_masked = np.zeros_like(code)
+                    cond_masked[:lb_idx] = code[:lb_idx]
+                    cond_masked[lb_idx] = 2
+                    cond_masked[lb_idx + 1:lb_idx + code_len - rb_idx] = code[rb_idx + 1:code_len]
 
-                item["code"] = code_masked
-                item["code_cond"] = cond_masked
-                item["code_len"] = i + 1
+                    code_masked = np.zeros_like(code)
+                    code_masked[0] = 3
+                    i = 1
+                    j = lb_idx + 1
+                    while j < rb_idx:
+                        if code[j] == 5:
+                            j = find_rb(code, j)
+                            code_masked[i] = 1
+                        else:
+                            code_masked[i] = code[j]
+                        i += 1
+                        j += 1
+                    code_masked[i] = 4
+
+                    item["code"] = code_masked
+                    item["code_cond"] = cond_masked
+                    item["code_len"] = i + 1
 
         return item
     
