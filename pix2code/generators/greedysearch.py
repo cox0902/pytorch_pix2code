@@ -10,9 +10,10 @@ class GreedySearch:
         self.vocab_size = vocab_size
         self.conditions = conditions
 
-    def search(self, model, images, init_input = None):
+    def search(self, model, batch, init_input = None):
         # images: (batch_size, C, W, H)
         # model.eval() should be called outside this scope.
+        images = batch["image"]
 
         if self.conditions is not None:
             emb = torch.nn.Embedding(90, 90, _weight=torch.from_numpy(self.conditions), _freeze=True)
@@ -34,7 +35,7 @@ class GreedySearch:
         mask = torch.ones((batch_size, ), dtype=torch.bool)
         length = torch.ones((batch_size, ), dtype=torch.int)
 
-        contexts: Dict[str, torch.Tensor] = model.predict_init(images)
+        contexts: Dict[str, torch.Tensor] = model.predict_init(batch)
 
         for t in range(1, self.max_seq_len - 1):
             if mask.sum() == 0:
