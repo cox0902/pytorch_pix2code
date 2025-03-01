@@ -304,18 +304,30 @@ class Vit2Tree(nn.Module):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
                             tgt_mask = cap_mask)
     
-    def predict_init(self, images):
-        memory = self.encoder(images)
+    def predict_init(self, batch):
+        memory = self.img_encoder(batch["image"])
+        code_cond = batch["code_cond"].long()
+        inp_emb = self.positional_encoding(self.tok_emb(code_cond))
+        inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code_cond == 0))
         return {
-            "memory": memory
+            "memory": memory,
+            "inp_enc": inp_enc
         }
 
     def predict_next(self, inputs, context):
+        memory = context["memory"]
+        inp_enc = context["inp_enc"]
 
-        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
+        vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
+        text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
+
+        memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+
+        inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
 
         cap_emb = self.positional_encoding(self.tok_emb(inputs))
-        outs = self.decoder(cap_emb, fusing_memory)
+        outs = self.decoder(cap_emb, memory, tgt_mask=inp_msk)
+
         scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         return predicts, scores, {}
