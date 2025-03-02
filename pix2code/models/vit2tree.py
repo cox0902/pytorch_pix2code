@@ -205,6 +205,7 @@ class Vit2Tree(nn.Module):
     def __init__(self, 
                  vocab_size,
                  max_len,
+                 disable_cross_attention = None,
                  image_size=256, 
                  patch_size=16, 
                  dim=512, 
@@ -216,7 +217,10 @@ class Vit2Tree(nn.Module):
                  proof_of_concept: bool = False):
         super().__init__()
 
+        self.disable_cross_attention = (disable_cross_attention == '1')
         self.proof_of_concept = proof_of_concept
+
+        print("disable_cross_attention:", self.disable_cross_attention)
 
         self.img_encoder = ViT(
             image_size = image_size,
@@ -249,8 +253,10 @@ class Vit2Tree(nn.Module):
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
         # self.fusing = nn.Linear(dim * 2, dim)
-        self.cross_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_head, batch_first=True)
-
+        if not self.disable_cross_attention:
+            self.cross_attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_head, batch_first=True)
+        else:
+            self.cross_attn = None
     
     def forward(self, batch):
         img = batch["image"]
@@ -272,11 +278,14 @@ class Vit2Tree(nn.Module):
         # print(inp_enc.shape)
         # else:
 
-        vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
-        text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
+        if not self.disable_cross_attention:
+            vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
+            text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
 
-        # print(vit_to_text.shape, text_to_vit.shape)
-        memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+            # print(vit_to_text.shape, text_to_vit.shape)
+            memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+        else:
+            memory = torch.cat([memory, inp_enc], dim=1)
 
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
         outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
@@ -318,10 +327,13 @@ class Vit2Tree(nn.Module):
         memory = context["memory"]
         inp_enc = context["inp_enc"]
 
-        vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
-        text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
+        if not self.disable_cross_attention:
+            vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
+            text_to_vit, _ = self.cross_attn(query=memory, key=inp_enc, value=inp_enc)
 
-        memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+            memory = torch.cat([vit_to_text, text_to_vit], dim=1)
+        else:
+            memory = torch.cat([memory, inp_enc], dim=1)
 
         inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
 

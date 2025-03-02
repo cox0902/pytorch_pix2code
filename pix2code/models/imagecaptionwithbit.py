@@ -680,7 +680,7 @@ class TreeNode:
             TreeNode._finalize(device, n.children[i])
 
     @staticmethod
-    def build_tree(code, device):
+    def build_tree(code, device, add_controls: bool = True):
         root = TreeNode(device, 3)
         node = root
         queue: List[TreeNode] = [node]
@@ -698,7 +698,8 @@ class TreeNode:
             assert iv != 0
             node = queue[-1].add_child(device, iv)
 
-        TreeNode._finalize(device, root)
+        if add_controls:
+            TreeNode._finalize(device, root)
         return root
 
 
