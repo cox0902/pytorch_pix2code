@@ -289,7 +289,8 @@ class Vit2Tree(nn.Module):
             memory = torch.cat([vit_to_text, text_to_vit], dim=1)
         else:
             memory_padding_mask = torch.cat([
-                torch.full((memory.size(0), memory.size(1)), fill_value=False), code_cond == 0], dim=1)
+                torch.full((memory.size(0), memory.size(1)), fill_value=False).to(memory.device), 
+                code_cond == 0], dim=1)
             # print(torch.full((memory.size(0), memory.size(1)), fill_value=False).shape)
             # print(memory_padding_mask.shape)
             memory = torch.cat([memory, inp_enc], dim=1)
@@ -348,7 +349,8 @@ class Vit2Tree(nn.Module):
             memory = torch.cat([vit_to_text, text_to_vit], dim=1)
         else:
             memory_padding_mask = torch.cat([
-                torch.full((memory.size(0), memory.size(1)), fill_value=False), inp_msk], dim=1)
+                torch.full((memory.size(0), memory.size(1)), fill_value=False).to(memory.device), 
+                inp_msk], dim=1)
             memory = torch.cat([memory, inp_enc], dim=1)
 
         inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
