@@ -40,6 +40,9 @@ def get_model_class_by_name(name):
     elif name == "vit2tree":
         from .vit2tree import Vit2Tree
         return Vit2Tree
+    elif name == "rnn2tree":
+        from .rnn2tree import Rnn2Tree
+        return Rnn2Tree
     else:
         return None
 

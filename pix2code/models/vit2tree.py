@@ -273,9 +273,12 @@ class Vit2Tree(nn.Module):
         
         # batch_size = img.size(0)
 
+        # print(code_cond.shape)
+
         inp_emb = self.positional_encoding(self.tok_emb(code_cond))
         inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code_cond == 0))
         # print(inp_enc.shape)
+        # print((code_cond == 0).shape)
         # else:
 
         if not self.disable_cross_attention:
@@ -285,20 +288,29 @@ class Vit2Tree(nn.Module):
             # print(vit_to_text.shape, text_to_vit.shape)
             memory = torch.cat([vit_to_text, text_to_vit], dim=1)
         else:
+            memory_padding_mask = torch.cat([
+                torch.full((memory.size(0), memory.size(1)), fill_value=False), code_cond == 0], dim=1)
+            # print(torch.full((memory.size(0), memory.size(1)), fill_value=False).shape)
+            # print(memory_padding_mask.shape)
             memory = torch.cat([memory, inp_enc], dim=1)
 
         cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
-        outs = self.decoder(cap_emb, memory, tgt_mask = cap_mask, 
-                            tgt_key_padding_mask = cap_padding_mask)
+        outs = self.decoder(cap_emb, memory, tgt_mask=cap_mask, 
+                            tgt_key_padding_mask=cap_padding_mask,
+                            memory_key_padding_mask=memory_padding_mask)
 
         outputs = self.generator(outs)  # (batch, seq_length, num_classes)
+        # print(outputs.shape)
 
         tgt_out = code[:, 1:]
+        # print(tgt_out.shape)
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
 
         decode_lengths = (code_lens - 1).cpu()
         scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
         targets = nn.utils.rnn.pack_padded_sequence(tgt_out, decode_lengths, batch_first=True, enforce_sorted=False).data
+
+        # print(scores.shape, targets.shape)
 
         return {
             "loss": loss,
@@ -320,12 +332,14 @@ class Vit2Tree(nn.Module):
         inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(code_cond == 0))
         return {
             "memory": memory,
-            "inp_enc": inp_enc
+            "inp_enc": inp_enc,
+            "inp_msk": code_cond == 0
         }
 
     def predict_next(self, inputs, context):
         memory = context["memory"]
         inp_enc = context["inp_enc"]
+        inp_msk = context["inp_msk"]
 
         if not self.disable_cross_attention:
             vit_to_text, _ = self.cross_attn(query=inp_enc, key=memory, value=memory)
@@ -333,12 +347,14 @@ class Vit2Tree(nn.Module):
 
             memory = torch.cat([vit_to_text, text_to_vit], dim=1)
         else:
+            memory_padding_mask = torch.cat([
+                torch.full((memory.size(0), memory.size(1)), fill_value=False), inp_msk], dim=1)
             memory = torch.cat([memory, inp_enc], dim=1)
 
         inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
 
         cap_emb = self.positional_encoding(self.tok_emb(inputs))
-        outs = self.decoder(cap_emb, memory, tgt_mask=inp_msk)
+        outs = self.decoder(cap_emb, memory, tgt_mask=inp_msk, memory_key_padding_mask=memory_padding_mask)
 
         scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
