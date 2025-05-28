@@ -194,7 +194,7 @@ class Decoder(nn.Module):
         return output
     
 
-def retrieve_fn(query, index_path, image_path, code_path: str):
+def retrieve_fn_old(query, index_path, image_path, code_path: str):
     index = faiss.read_index(index_path)
     _, I = index.search(query, k=1)
     del index
@@ -215,6 +215,39 @@ def retrieve_fn(query, index_path, image_path, code_path: str):
     images = np.load(image_path, "r")
     r["image_embs"] = torch.Tensor(images[docids])
     del images
+    return r
+
+
+#
+
+global_index = None
+global_codes = None
+global_code_embs = None
+global_images = None
+
+def retrieve_fn(query, index_path, image_path, code_path: str):
+    global global_index, global_codes, global_code_embs, global_images
+
+    if global_index is None:
+        global_index = faiss.read_index(index_path)
+        if code_path.endswith(".npy"):
+            global_code_embs = np.load(code_path, "r")
+        else:
+            with h5py.File(code_path, "r") as h:
+                global_codes = h["ivs"][:]
+        global_images = np.load(image_path, "r")
+
+    _, I = global_index.search(query, k=1)
+    docids = I[:, 0]  # .ravel()
+
+    r = {}
+
+    if global_code_embs is not None:
+        r["code_embs"] = torch.Tensor(global_code_embs[docids])
+    else:
+        r["codes"] = torch.LongTensor(global_codes[docids])
+    
+    r["image_embs"] = torch.Tensor(global_images[docids])
     return r
 
 
