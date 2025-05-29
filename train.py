@@ -49,6 +49,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--logit-adjustment-train", type=str)
     parser.add_argument("--logit-adjustment-valid", type=str)
 
+    parser.add_argument("--retriever-fn", type=str)
     parser.add_argument("--retriever-index-path", type=str)
     parser.add_argument("--retriever-image-path", type=str)
     parser.add_argument("--retriever-code-path", type=str)
@@ -188,14 +189,18 @@ def build_model(args, data_set):
         # if args.retriever_split_path is not None:
         #     split = np.load(args.retriever_split_path)["train"]
         # import faiss
-        from pix2code.models.rag2code import retrieve_fn
+        from pix2code.models.rag2code import retrieve_fn, retrieve_fn_old
+
+        fn = retrieve_fn
+        if args.retriever_fn == "old":
+            fn = retrieve_fn_old
 
         # index = faiss.read_index(args.retriever_index_path)
         # database = ImageCodeDataset(args.retriever_image_path,
         #                             args.retriever_code_path,
         #                             split)
 
-        model_params["retrieve_fn"] = partial(retrieve_fn, 
+        model_params["retrieve_fn"] = partial(fn, 
                                               index_path=args.retriever_index_path, 
                                               image_path=args.retriever_image_path,
                                               code_path=args.retriever_code_path)
