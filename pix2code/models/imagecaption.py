@@ -350,7 +350,8 @@ class ImageCaption(nn.Module):
     #         "hiddens": hiddens
     #     }
 
-    def predict_init(self, images):
+    def predict_init(self, batch):
+        images = batch["image"]
         batch_size = images.size(0)
         
         # with torch.no_grad() should be called outside this scope.

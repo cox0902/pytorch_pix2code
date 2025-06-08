@@ -615,7 +615,7 @@ class Trainer:
             for i, batch in enumerate(data_loader):
                 batch = self.to_device(batch)
 
-                predicts, scores, predicts_length = generator.search(model, batch["image"])
+                predicts, scores, predicts_length = generator.search(model, batch)
 
                 outputs["predicts"].extend(predicts.cpu())
                 outputs["predicts_length"].extend(predicts_length.cpu())

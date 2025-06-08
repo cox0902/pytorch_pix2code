@@ -1,4 +1,6 @@
-import faiss
+from typing import *
+
+import zss
 import h5py
 import numpy as np
 import math
@@ -6,6 +8,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
@@ -258,16 +261,58 @@ def _mask_pads(target, ll, smooth_obj):
         smooth_obj.masked_fill_(pad_mask, 0.0)
     return ll.squeeze(-1), smooth_obj.squeeze(-1)
 
-class Rag2Code(nn.Module):
+
+class BottleNeck(nn.Module):
+
+    def __init__(self, 
+                 vocab_size,
+                 image_size=256, 
+                 patch_size=16, 
+                 dim=512, 
+                 num_layer=6,
+                 num_head=8, 
+                 mlp_dim=1024, 
+                 dropout=0.1, 
+                 emb_dropout=0.1,):
+        super().__init__()
+
+        self.img_encoder = ViT(
+            image_size=image_size,
+            patch_size=patch_size,
+            dim=dim,
+            depth=num_layer,
+            heads=num_head,
+            mlp_dim=mlp_dim,
+            dropout=dropout,
+            emb_dropout=emb_dropout
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=dim, nhead=num_head, batch_first=True)
+        self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
+
+
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=dim, nhead=num_head, batch_first=True)
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layer)
+
+        self.tok_emb = TokenEmbedding(vocab_size, dim)
+        self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
+
+    def forward(self, images, inputs):
+
+        cap_mask, cap_padding_mask = create_mask(inputs)
+
+
+class TreeEditNet(nn.Module):
 
     def __init__(self, 
                  vocab_size,
                  max_len,
-                 retrieve_fn,
-                 has_encoder = None, 
-                 normalize = None,
-                 fuse_image = None,
-                 info_nce = None,
+
+                 backbone, 
+                 generator,
+                 
                  image_size=256, 
                  patch_size=16, 
                  dim=512, 
@@ -277,97 +322,48 @@ class Rag2Code(nn.Module):
                  dropout=0.1, 
                  emb_dropout=0.1,
                  proof_of_concept: bool = False):
+        
         super().__init__()
-
-        self.has_encoder = (has_encoder == '1')
-        self.normalize = (normalize == '1')
-        self.fuse_image = (fuse_image == '1')
-        self.info_nce = (info_nce == '1')
-        print({
-            "has_encoder": self.has_encoder,
-            "normalize": self.normalize,
-            "fuse_image": self.fuse_image,
-            "info_nce": self.info_nce
-        })
-
         self.proof_of_concept = proof_of_concept
 
-        self.retrieve_fn = retrieve_fn  # Retriever(retriever_index_path, retriever_database)
+        self.backbone = backbone
+        self.backbone.eval()
+        self.generator = generator
 
-        self.img_encoder = ViT(
-            image_size = image_size,
-            patch_size = patch_size,
-            dim = dim,
-            depth = num_layer,
-            heads = num_head,
-            mlp_dim = mlp_dim,
-            dropout = dropout,
-            emb_dropout = emb_dropout
+        self.bottleneck = BottleNeck(
+            vocab_size,
+            image_size=image_size, 
+            patch_size=patch_size, 
+            dim=dim, 
+            num_layer=num_layer,
+            num_head=num_head, 
+            mlp_dim=mlp_dim, 
+            dropout=dropout, 
+            emb_dropout=emb_dropout,
         )
-        # self.encoder = torchvision.models.vit_b_16()
 
-        if self.has_encoder:
-            encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
-            self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
-
-        # self.decoder = Decoder(
-        #     dim = dim, 
-        #     num_head = num_head, 
-        #     num_layers = num_layer
-        # )
-
-        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first=True)
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layer)
-
-        self.tok_emb = TokenEmbedding(vocab_size, dim)
-        self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
-        self.generator = nn.Linear(dim, vocab_size)
+        self.delete_head = nn.Linear(dim, 2)
+        self.insert_head = nn.Linear(dim, 3)
+        self.update_head = nn.Linear(dim, vocab_size)
 
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
         self.fusing = nn.Linear(dim * 2, dim)
     
-    def marginalize(self, seq_logits, doc_scores):
-        # RAG-token marginalization
-        seq_logprobs = nn.functional.log_softmax(seq_logits, dim=-1)  # (b, s, v)
-        doc_logprobs = torch.log_softmax(doc_scores, dim=-1)  # (b, s, s)
-        log_prob_sum = seq_logprobs + doc_logprobs.unsqueeze(-1)  # (b, s, v)
-        return torch.logsumexp(log_prob_sum, dim=-1)
-    
-    def get_nll(self, seq_logits, doc_scores, target, reduce_loss=False, epsilon=0.0, n_docs=None):
-        # shift tokens left
-        target = torch.cat(
-            [target[:, 1:], target.new(target.shape[0], 1).fill_(0)], 1
-        )
-
-        rag_logprobs = self.marginalize(seq_logits, doc_scores, n_docs)
-
-        target = target.unsqueeze(-1)
-        assert target.dim() == rag_logprobs.dim()
-
-        ll = rag_logprobs.gather(dim=-1, index=target)
-        smooth_obj = rag_logprobs.sum(dim=-1, keepdim=True)  # total sum of all (normalised) logits
-        ll, smooth_obj = _mask_pads(target, ll, smooth_obj)
-        ll = ll.sum(1)  # sum over tokens
-        smooth_obj = smooth_obj.sum(1)
-
-        nll_loss = -ll
-        smooth_loss = -smooth_obj
-
-        if reduce_loss:
-            nll_loss = nll_loss.sum()
-            smooth_loss = smooth_loss.sum()
-
-        eps_i = epsilon / rag_logprobs.size(-1)
-        loss = (1.0 - epsilon) * nll_loss + eps_i * smooth_loss
-        return loss
-
     def forward(self, batch):
-        img = batch["image"]
-        captions = batch["code"].long()
-        caplens = batch["code_len"]
+        
+        #
 
-        tgt_input = captions[:, :-1]
+        with torch.no_grad():
+            predicts, _, _ = self.generator.search(self.backbone, batch)
+            predicts = predicts.detach().cpu()
+
+        #
+
+        image = batch["image"]
+        targets = batch["code"].long()
+        targets_lens = batch["code_len"]
+
 
         cap_mask, cap_padding_mask = create_mask(tgt_input)
 
@@ -377,8 +373,7 @@ class Rag2Code(nn.Module):
         batch_size = img.size(0)
 
         ret_memory = rearrange(memory, "b s d -> (b s) d")
-        if self.normalize:
-            ret_memory /= ret_memory.norm(dim=-1, keepdim=True)
+        # ret_memory = memory[:, 0, :]
 
         r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
         # embb (batch_size * 257, 512)
@@ -402,10 +397,12 @@ class Rag2Code(nn.Module):
             print("inp_enc_all:", inp_enc_all.shape)
         # else:
             
-        if self.fuse_image:
-            code_embs = r["image_embs"].to(ret_memory.device)
-        else:
-            code_embs = r["code_embs"].to(ret_memory.device)
+        # image_embs = r["image_embs"].to(ret_memory.device)
+        # image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
+        # doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
+        # print(doc_scores.shape)  # (batch_size, 257, 257)
+
+        code_embs = r["code_embs"].to(ret_memory.device)
         code_embs = rearrange(code_embs, "(b s) d -> b s d", b=batch_size)
         fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
 
@@ -417,16 +414,6 @@ class Rag2Code(nn.Module):
 
         tgt_out = captions[:, 1:]
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
-
-        if self.info_nce:
-            p = r["image_embs"].to(ret_memory.device)
-            p = rearrange(p, "(b s) d -> s d b", b=batch_size)
-            q = rearrange(ret_memory, "(b s) d -> s b d", b=batch_size)
-            m = torch.bmm(q, p)
-            m = torch.exp(m)
-            r = torch.diagonal(m, 0, 1, 2) / m.sum(dim=2)
-            r = -torch.log(r).sum(dim=0)
-            loss += r.mean()
 
         decode_lengths = (caplens - 1).cpu()
         scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
