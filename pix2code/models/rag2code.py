@@ -378,7 +378,7 @@ class Rag2Code(nn.Module):
 
         ret_memory = rearrange(memory, "b s d -> (b s) d")
         if self.normalize:
-            ret_memory /= ret_memory.norm(dim=-1, keepdim=True)
+            ret_memory = ret_memory / ret_memory.norm(dim=-1, keepdim=True)
 
         r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
         # embb (batch_size * 257, 512)
