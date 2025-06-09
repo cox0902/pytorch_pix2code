@@ -377,7 +377,7 @@ class Rag2Code(nn.Module):
         batch_size = img.size(0)
 
         ret_memory = rearrange(memory, "b s d -> (b s) d")
-        if self.normalize:
+        if getattr(self, "normalize", False):
             ret_memory = ret_memory / ret_memory.norm(dim=-1, keepdim=True)
 
         r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
@@ -402,7 +402,7 @@ class Rag2Code(nn.Module):
             print("inp_enc_all:", inp_enc_all.shape)
         # else:
             
-        if self.fuse_image:
+        if getattr(self, "fuse_image", False):
             code_embs = r["image_embs"].to(ret_memory.device)
         else:
             code_embs = r["code_embs"].to(ret_memory.device)
@@ -418,7 +418,7 @@ class Rag2Code(nn.Module):
         tgt_out = captions[:, 1:]
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
 
-        if self.info_nce:
+        if getattr(self, "info_nce", False):
             p = r["image_embs"].to(ret_memory.device)
             p = rearrange(p, "(b s) d -> s d b", b=batch_size)
             q = rearrange(ret_memory, "(b s) d -> s b d", b=batch_size)
