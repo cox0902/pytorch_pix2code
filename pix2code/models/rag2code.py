@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
+from loss import FocalLoss
 
 
 def pair(t):
@@ -268,6 +269,7 @@ class Rag2Code(nn.Module):
                  normalize = None,
                  fuse_image = None,
                  info_nce = None,
+                 focal_loss = None,
                  image_size=256, 
                  patch_size=16, 
                  dim=512, 
@@ -283,11 +285,13 @@ class Rag2Code(nn.Module):
         self.normalize = (normalize == '1')
         self.fuse_image = (fuse_image == '1')
         self.info_nce = (info_nce == '1')
+        self.focal_loss = (focal_loss == "1")
         print({
             "has_encoder": self.has_encoder,
             "normalize": self.normalize,
             "fuse_image": self.fuse_image,
-            "info_nce": self.info_nce
+            "info_nce": self.info_nce,
+            "focal_loss": self.focal_loss,
         })
 
         self.proof_of_concept = proof_of_concept
@@ -323,7 +327,10 @@ class Rag2Code(nn.Module):
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
         self.generator = nn.Linear(dim, vocab_size)
 
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+        if self.focal_loss:
+            self.criterion = FocalLoss(ignore_index=0)
+        else:
+            self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
         self.fusing = nn.Linear(dim * 2, dim)
     
