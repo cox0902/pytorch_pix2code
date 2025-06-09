@@ -328,7 +328,7 @@ class Rag2Code(nn.Module):
         self.generator = nn.Linear(dim, vocab_size)
 
         if self.focal_loss:
-            self.criterion = FocalLoss(ignore_index=0)
+            self.criterion = FocalLoss(ignore_index=0, gamma=2)
         else:
             self.criterion = nn.CrossEntropyLoss(ignore_index=0)
 
