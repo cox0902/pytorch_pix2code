@@ -1,39 +1,36 @@
-from .pix2code import Pix2Code
-from .imagecaption import ImageCaption
-# from .imagecaptionwithbox import ImageCaptionWithBox
-# from .imagecaptionwithrpn import ImageCaptionWithRpn
-# from .imagecaptionwithspa import ImageCaptionWithSpa
-from .imagecaptionwithrnn import ImageCaptionWithRnn
-from .imagecaptionwithmsk import ImageCaptionWithMsk
-from .imagecaptionwithtwo import ImageCaptionWithTwo
-from .vit2code import Vit2Code
-from .imagecaptionwithtnn import ImageCaptionWithTnn
-from .imagecaptionwithbit import ImageCaptionWithBit
-from .imagecaptionwithtre import ImageCaptionWithTre
-from .imagecaptionwithptr import ImageCaptionWithPtr
-from .vit2box import Vit2Box
+from typing import *
 
 
 def get_model_class_by_name(name):
     if name == "pix2code":
+        from .pix2code import Pix2Code
         return Pix2Code
     elif name == "imagecaption":
+        from .imagecaption import ImageCaption
         return ImageCaption
     elif name in ["imagecaptionwithbox", "icwb"]:
-        return ImageCaption
+        from .imagecaptionwithbox import ImageCaptionWithBox
+        return ImageCaptionWithBox
     elif name in ["imagecaptionwithrnn", "icwr"]:
+        from .imagecaptionwithrnn import ImageCaptionWithRnn
         return ImageCaptionWithRnn
     elif name in ["imagecaptionwithtnn", "icwt"]:
+        from .imagecaptionwithtnn import ImageCaptionWithTnn
         return ImageCaptionWithTnn
     elif name in ["imagecaptionwithtwo", "icw2"]:
+        from .imagecaptionwithtwo import ImageCaptionWithTwo
         return ImageCaptionWithTwo
     elif name in ["ImageCaptionWithBit".lower(), "ibit"]:
+        from .imagecaptionwithbit import ImageCaptionWithBit
         return ImageCaptionWithBit
     elif name in ["ImageCaptionWithTre".lower(), "tree"]:
+        from .imagecaptionwithtre import ImageCaptionWithTre
         return ImageCaptionWithTre
     elif name in ["ImageCaptionWithPtr".lower(), "icwp"]:
+        from .imagecaptionwithptr import ImageCaptionWithPtr
         return ImageCaptionWithPtr
     elif name == "vit2code":
+        from .vit2code import Vit2Code
         return Vit2Code
     elif name == "Rag2Code".lower():
         from .rag2code import Rag2Code
@@ -45,23 +42,12 @@ def get_model_class_by_name(name):
         from .rnn2tree import Rnn2Tree
         return Rnn2Tree
     elif name == "Vit2Box".lower():
+        from .vit2box import Vit2Box
         return Vit2Box
     else:
         return None
 
 
 __all__ = [
-    Pix2Code,
-    ImageCaption,
-    # ImageCaptionWithBox,
-    ImageCaptionWithRnn,
-    # ImageCaptionWithRpn,
-    # ImageCaptionWithSpa,
-    ImageCaptionWithMsk,
-    ImageCaptionWithTwo,
-    Vit2Code,
-    ImageCaptionWithTnn,
-    ImageCaptionWithBit,
-    ImageCaptionWithTre,
-    ImageCaptionWithPtr
+    get_model_class_by_name
 ]
