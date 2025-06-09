@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-from loss import FocalLoss
+from .loss import FocalLoss
 
 
 def pair(t):
