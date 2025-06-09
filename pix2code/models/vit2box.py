@@ -250,6 +250,8 @@ class Vit2Box(nn.Module):
 
         preds_box = self.generator(outs).sigmoid()  # (batch, seq_length, num_classes)
 
+        # print(preds_box[0, 1, :])
+        # print(truth_box[0, 1, :])
         # tgt_out = captions[:, 1:]
 
         decode_lengths = caplens.cpu()

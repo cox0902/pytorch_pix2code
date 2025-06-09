@@ -146,7 +146,8 @@ def check_model(model: str) -> Tuple[bool, bool]:
     # returns (has_rect, norm_rect, mask_rect)
     model_name, model_params = parse_model(model)
     assert model_name is not None
-    if model_name in ["imagecaptionwithbox", "icwb", "vit2box"]:
+    # print(model_name)
+    if model_name in ["imagecaptionwithbox", "icwb"]:
         return True, False, False
     elif model_name in ["vit2box"]:
         return True, True, False
@@ -236,6 +237,8 @@ def main(args):
         print("!! Warning: has_rect is not supported by dataset!")
         has_rect = False
         norm_rect = False
+
+    print(has_rect, norm_rect)
 
     if args.split_path is not None:
         split = np.load(args.split_path)
