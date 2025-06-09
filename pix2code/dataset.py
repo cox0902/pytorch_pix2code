@@ -50,7 +50,7 @@ class ImageCodeDataset(Dataset):
             if "rects" not in hi:
                 return False
         with h5py.File(code_path, "r") as ho:
-            if "idx" not in ho:
+            if "ids" not in ho:
                 return False
         return True
 

@@ -1,14 +1,12 @@
-import faiss
-import h5py
-import numpy as np
 import math
 import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import TransformerDecoderLayer
+import torchvision
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
-from .loss import FocalLoss
 
 
 def pair(t):
@@ -171,7 +169,7 @@ class Decoder(nn.Module):
 
     def __init__(self, dim, num_head, num_layers, norm=None):
         super().__init__()
-        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
+        decoder_layer = TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first = True)
         torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
         self.layers = nn.ModuleList([copy.deepcopy(decoder_layer) for i in range(num_layers)])
         self.num_layers = num_layers
@@ -195,99 +193,10 @@ class Decoder(nn.Module):
         return output
     
 
-def retrieve_fn_old(query, index_path, image_path, code_path: str):
-    index = faiss.read_index(index_path)
-    _, I = index.search(query, k=1)
-    del index
-    docids = I[:, 0]  # .ravel()
-
-    r = {}
-
-    if code_path.endswith(".npy"):
-        codes = np.load(code_path, "r")
-        r["code_embs"] = torch.Tensor(codes[docids])
-    else:
-        with h5py.File(code_path, "r") as h:
-            codes = []
-            for docid in docids:
-                codes.append(torch.LongTensor(h["ivs"][docid]))
-            r["codes"] = torch.stack(codes, dim=0)
-    
-    images = np.load(image_path, "r")
-    r["image_embs"] = torch.Tensor(images[docids])
-    del images
-    return r
-
-
-#
-
-global_index = None
-global_codes = None
-global_code_embs = None
-global_images = None
-
-def retrieve_fn(query, index_path, image_path, code_path: str):
-    global global_index, global_codes, global_code_embs, global_images
-
-    if global_index is None:
-        global_index = faiss.read_index(index_path)
-        if code_path.endswith(".npy"):
-            global_code_embs = np.load(code_path, "r")
-        else:
-            with h5py.File(code_path, "r") as h:
-                global_codes = h["ivs"][:]
-        global_images = np.load(image_path, "r")
-
-    _, I = global_index.search(query, k=1)
-    docids = I[:, 0]  # .ravel()
-
-    r = {}
-
-    if global_code_embs is not None:
-        r["code_embs"] = torch.Tensor(global_code_embs[docids])
-    else:
-        r["codes"] = torch.LongTensor(global_codes[docids])
-    
-    r["image_embs"] = torch.Tensor(global_images[docids])
-    return r
-
-
-def _mask_pads(target, ll, smooth_obj):
-    pad_mask = target.eq(0)
-    if pad_mask.any():
-        ll.masked_fill_(pad_mask, 0.0)
-        smooth_obj.masked_fill_(pad_mask, 0.0)
-    return ll.squeeze(-1), smooth_obj.squeeze(-1)
-
-
-class CascadeClassifier(nn.Module):
-
-    def __init__(self, dim):
-        self.g1 = [5, 6, 24]
-        self.c1 = nn.Linear(dim, len(self.g1) + 1)
-        self.g2 = [73, 10, 55, 82, 4, 40, 11, 25, 8]
-        self.c2 = nn.Linear(dim, len(self.g2) + 1)
-        self.g3 = [34, 27, 42, 62, 60, 46, 80, 68, 26, 74, 50, 28, 30]
-        self.c3 = nn.Linear(dim, len(self.g3) + 1)
-        ga = self.g1 + self.g2 + self.g3
-        self.g4 = [i for i in range(90) if i not in ga]
-        self.c4 = nn.Linear(dim, len(self.g4) + 1)
-
-    def forward(self, x):
-        self.c1(x)
-
-
-class Rag2Code(nn.Module):
-
+class Vit2Box(nn.Module):
     def __init__(self, 
-                 vocab_size,
-                 max_len,
-                 retrieve_fn,
-                 has_encoder = None, 
-                 normalize = None,
-                 fuse_image = None,
-                 info_nce = None,
-                 focal_loss = None,
+                 vocab_size, 
+                 max_len, 
                  image_size=256, 
                  patch_size=16, 
                  dim=512, 
@@ -296,27 +205,11 @@ class Rag2Code(nn.Module):
                  mlp_dim=1024, 
                  dropout=0.1, 
                  emb_dropout=0.1,
-                 proof_of_concept: bool = False):
+                 proof_of_concept=False,
+                 ):
         super().__init__()
 
-        self.has_encoder = (has_encoder == '1')
-        self.normalize = (normalize == '1')
-        self.fuse_image = (fuse_image == '1')
-        self.info_nce = (info_nce == '1')
-        self.focal_loss = (focal_loss == "1")
-        print({
-            "has_encoder": self.has_encoder,
-            "normalize": self.normalize,
-            "fuse_image": self.fuse_image,
-            "info_nce": self.info_nce,
-            "focal_loss": self.focal_loss,
-        })
-
-        self.proof_of_concept = proof_of_concept
-
-        self.retrieve_fn = retrieve_fn  # Retriever(retriever_index_path, retriever_database)
-
-        self.img_encoder = ViT(
+        self.encoder = ViT(
             image_size = image_size,
             patch_size = patch_size,
             dim = dim,
@@ -328,164 +221,87 @@ class Rag2Code(nn.Module):
         )
         # self.encoder = torchvision.models.vit_b_16()
 
-        if self.has_encoder:
-            encoder_layer = nn.TransformerEncoderLayer(d_model=dim, nhead=num_head, batch_first=True)
-            self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
-
-        # self.decoder = Decoder(
-        #     dim = dim, 
-        #     num_head = num_head, 
-        #     num_layers = num_layer
-        # )
-
-        decoder_layer = nn.TransformerDecoderLayer(d_model=dim, nhead=num_head, batch_first=True)
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layer)
-
+        self.decoder = Decoder(
+            dim = dim, 
+            num_head = num_head, 
+            num_layers = num_layer
+        )
         self.tok_emb = TokenEmbedding(vocab_size, dim)
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
-        self.generator = nn.Linear(dim, vocab_size)
+        self.generator = nn.Linear(dim, 4)
 
-        if self.focal_loss:
-            self.criterion = FocalLoss(ignore_index=0, gamma=2)
-        else:
-            self.criterion = nn.CrossEntropyLoss(ignore_index=0)
-
-        self.fusing = nn.Linear(dim * 2, dim)
+        self.criterion = torchvision.ops.generalized_box_iou_loss
     
-    def marginalize(self, seq_logits, doc_scores):
-        # RAG-token marginalization
-        seq_logprobs = nn.functional.log_softmax(seq_logits, dim=-1)  # (b, s, v)
-        doc_logprobs = torch.log_softmax(doc_scores, dim=-1)  # (b, s, s)
-        log_prob_sum = seq_logprobs + doc_logprobs.unsqueeze(-1)  # (b, s, v)
-        return torch.logsumexp(log_prob_sum, dim=-1)
-    
-    def get_nll(self, seq_logits, doc_scores, target, reduce_loss=False, epsilon=0.0, n_docs=None):
-        # shift tokens left
-        target = torch.cat(
-            [target[:, 1:], target.new(target.shape[0], 1).fill_(0)], 1
-        )
-
-        rag_logprobs = self.marginalize(seq_logits, doc_scores, n_docs)
-
-        target = target.unsqueeze(-1)
-        assert target.dim() == rag_logprobs.dim()
-
-        ll = rag_logprobs.gather(dim=-1, index=target)
-        smooth_obj = rag_logprobs.sum(dim=-1, keepdim=True)  # total sum of all (normalised) logits
-        ll, smooth_obj = _mask_pads(target, ll, smooth_obj)
-        ll = ll.sum(1)  # sum over tokens
-        smooth_obj = smooth_obj.sum(1)
-
-        nll_loss = -ll
-        smooth_loss = -smooth_obj
-
-        if reduce_loss:
-            nll_loss = nll_loss.sum()
-            smooth_loss = smooth_loss.sum()
-
-        eps_i = epsilon / rag_logprobs.size(-1)
-        loss = (1.0 - epsilon) * nll_loss + eps_i * smooth_loss
-        return loss
-
     def forward(self, batch):
         img = batch["image"]
         captions = batch["code"].long()
         caplens = batch["code_len"]
+        truth_box = batch["rect"]
 
-        tgt_input = captions[:, :-1]
+        # tgt_input = captions  # [:, :-1]
 
-        cap_mask, cap_padding_mask = create_mask(tgt_input)
+        _, cap_padding_mask = create_mask(captions)
 
-        memory = self.img_encoder(img)
+        memory = self.encoder(img)
         # print(memory.shape)  # (batch_size, 257, 512)
-        
-        batch_size = img.size(0)
-
-        ret_memory = rearrange(memory, "b s d -> (b s) d")
-        if getattr(self, "normalize", False):
-            ret_memory = ret_memory / ret_memory.norm(dim=-1, keepdim=True)
-
-        r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
-        # embb (batch_size * 257, 512)
-        # code (batch_size * 257, 356)
-        # print(r["image_embs"].shape, r["code_embs"].shape)
-        # code = code.to(memory.device)
-
-        if self.has_encoder:
-            code = rearrange(code, "(b s) d -> b s d", b=batch_size)
-            inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
-            for i in range(257):
-                batched_code = code[:, i, :].to(memory.device)
-                # print(batched_code.shape)
-                inp_emb = self.positional_encoding(self.tok_emb(batched_code))
-                # print(inp_emb.shape)
-                inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(batched_code == 0))
-                inp_enc_all[:, i, :] = inp_enc[:, -1, :]
-                del batched_code
-                del inp_emb
-                del inp_enc
-            print("inp_enc_all:", inp_enc_all.shape)
-        # else:
-            
-        if getattr(self, "fuse_image", False):
-            code_embs = r["image_embs"].to(ret_memory.device)
-        else:
-            code_embs = r["code_embs"].to(ret_memory.device)
-        code_embs = rearrange(code_embs, "(b s) d -> b s d", b=batch_size)
-        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
-
-        cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
-        outs = self.decoder(cap_emb, fusing_memory, tgt_mask = cap_mask, 
+        cap_emb = self.positional_encoding(self.tok_emb(captions))
+        outs = self.decoder(cap_emb, memory, 
                             tgt_key_padding_mask = cap_padding_mask)
 
-        outputs = self.generator(outs)  # (batch, seq_length, num_classes)
+        preds_box = self.generator(outs).sigmoid()  # (batch, seq_length, num_classes)
 
-        tgt_out = captions[:, 1:]
-        loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
+        # tgt_out = captions[:, 1:]
 
-        if getattr(self, "info_nce", False):
-            p = r["image_embs"].to(ret_memory.device)
-            p = rearrange(p, "(b s) d -> s d b", b=batch_size)
-            q = rearrange(ret_memory, "(b s) d -> s b d", b=batch_size)
-            m = torch.bmm(q, p)
-            m = torch.exp(m)
-            r = torch.diagonal(m, 0, 1, 2) / m.sum(dim=2)
-            r = -torch.log(r).sum(dim=0)
-            loss += r.mean()
+        decode_lengths = caplens.cpu()
+        preds_box = nn.utils.rnn.pack_padded_sequence(
+            preds_box, decode_lengths, batch_first=True, enforce_sorted=False).data
+        truth_box = nn.utils.rnn.pack_padded_sequence(
+            truth_box, decode_lengths, batch_first=True, enforce_sorted=False).data
+        truth_lbl = nn.utils.rnn.pack_padded_sequence(
+            captions, decode_lengths, batch_first=True, enforce_sorted=False).data
 
-        decode_lengths = (caplens - 1).cpu()
-        scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
-        targets = nn.utils.rnn.pack_padded_sequence(tgt_out, decode_lengths, batch_first=True, enforce_sorted=False).data
+        # print(preds_box.shape, truth_box.shape)
+
+        box_masks = (truth_lbl > 7)
+
+        preds_box = preds_box[box_masks]
+        truth_box = truth_box[box_masks]
+
+        # print(preds_box.shape, truth_box.shape)
+
+        preds_box_convert = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
+        truth_box_convert = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
+
+        loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
 
         return {
             "loss": loss,
-            "scores": torch.nn.functional.softmax(scores, dim=-1), 
-            "targets": targets
+            "scores": preds_box_convert, 
+            "targets": truth_box_convert
         }
     
     def encode(self, img):
-        return self.img_encoder(img)
+        return self.encoder(img)
 
     def decode(self, caption, memory, cap_mask):
         return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
                             tgt_mask = cap_mask)
-    
+
     def predict_init(self, images):
         memory = self.encoder(images)
         return {
             "memory": memory
         }
-
+    
     def predict_next(self, inputs, context):
-
-        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
+        # print(inputs.shape)
+        inp_msk = generate_square_subsequent_mask(inputs.size(1), inputs.device)
 
         cap_emb = self.positional_encoding(self.tok_emb(inputs))
-        outs = self.decoder(cap_emb, fusing_memory)
+        outs = self.decoder(cap_emb, context["memory"], tgt_mask=inp_msk)
         scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
         predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
         return predicts, scores, {}
-
 
 # def generate_square_subsequent_mask(sz, device='cpu'):
 #     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)

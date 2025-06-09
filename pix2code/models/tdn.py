@@ -12,6 +12,8 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from ..tree import TreeNode
+
 
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
@@ -359,6 +361,8 @@ class TreeEditNet(nn.Module):
             predicts = predicts.detach().cpu()
 
         #
+
+        TreeNode
 
         image = batch["image"]
         targets = batch["code"].long()

@@ -356,18 +356,50 @@ class MapScorer(Scorer):
 
 class IouScorer(Scorer):
 
-    def __init__(self):
+    def __init__(self, name_hyp, name_ref):
         super().__init__()
         self.name = "iou"
+        self.name_hyp = name_hyp
+        self.name_ref = name_ref
         self.scorer = IntersectionOverUnion()
+        self.ious = []
 
+    @staticmethod
+    def _compute_iou(
+        boxes1: torch.Tensor,
+        boxes2: torch.Tensor,
+        eps: float = 1e-7
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        x1, y1, x2, y2 = boxes1.unbind(dim=-1)
+        x1g, y1g, x2g, y2g = boxes2.unbind(dim=-1)
+
+        # Intersection keypoints
+        xkis1 = torch.max(x1, x1g)
+        ykis1 = torch.max(y1, y1g)
+        xkis2 = torch.min(x2, x2g)
+        ykis2 = torch.min(y2, y2g)
+
+        intsctk = torch.zeros_like(x1)
+        mask = (ykis2 > ykis1) & (xkis2 > xkis1)
+        intsctk[mask] = (xkis2[mask] - xkis1[mask]) * (ykis2[mask] - ykis1[mask])
+        unionk = (x2 - x1) * (y2 - y1) + (x2g - x1g) * (y2g - y1g) - intsctk
+
+        # return intsctk, unionk
+        return intsctk / (unionk + eps)
+    
     def update(self, outputs):
-        in_preds = [{} for each in outputs]
-        in_target = [{}]
-        self.scorer.update(in_preds, in_target)
+        iou = IouScorer._compute_iou(outputs[self.name_hyp], outputs[self.name_ref])
+        # print(iou.shape)
+        self.ious.append(iou)
 
     def compute(self):
-        return self.scorer.compute()["iou"]
+        mean_iou = torch.cat(self.ious).mean()
+        # print(mean_iou.shape)
+        # self.ious = []
+        return mean_iou.item()
+
+registered_scores["iou"] = IouScorer("scores", "targets")
 
 
 def _handle_zero_division(x, zero_division):

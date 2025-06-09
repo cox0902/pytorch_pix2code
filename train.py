@@ -146,8 +146,10 @@ def check_model(model: str) -> Tuple[bool, bool]:
     # returns (has_rect, norm_rect, mask_rect)
     model_name, model_params = parse_model(model)
     assert model_name is not None
-    if model_name in ["imagecaptionwithbox", "icwb"]:
+    if model_name in ["imagecaptionwithbox", "icwb", "vit2box"]:
         return True, False, False
+    elif model_name in ["vit2box"]:
+        return True, True, False
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         return True, False, True
     elif model_name in ["imagecaptionwithspa", "icws"]:

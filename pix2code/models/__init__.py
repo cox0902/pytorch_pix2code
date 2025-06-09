@@ -11,6 +11,7 @@ from .imagecaptionwithtnn import ImageCaptionWithTnn
 from .imagecaptionwithbit import ImageCaptionWithBit
 from .imagecaptionwithtre import ImageCaptionWithTre
 from .imagecaptionwithptr import ImageCaptionWithPtr
+from .vit2box import Vit2Box
 
 
 def get_model_class_by_name(name):
@@ -43,6 +44,8 @@ def get_model_class_by_name(name):
     elif name == "rnn2tree":
         from .rnn2tree import Rnn2Tree
         return Rnn2Tree
+    elif name == "Vit2Box".lower():
+        return Vit2Box
     else:
         return None
 
