@@ -1,6 +1,6 @@
 from typing import *
 import torch
-import transformers
+# import transformers
 
 
 class BeamSearch:
