@@ -1,5 +1,5 @@
 
-from focalloss import FocalLoss, focal_loss
+from .focalloss import FocalLoss, focal_loss
 
 
 __all__ = [
