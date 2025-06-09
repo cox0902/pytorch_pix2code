@@ -362,11 +362,12 @@ class TreeEditNet(nn.Module):
 
         #
 
-        TreeNode.build_tree()
-
         image = batch["image"]
         targets = batch["code"].long()
         targets_lens = batch["code_len"]
+
+        tree_src = TreeNode.build_tree()
+        tree_dst = 
 
 
         cap_mask, cap_padding_mask = create_mask(tgt_input)
