@@ -362,7 +362,7 @@ class TreeEditNet(nn.Module):
 
         #
 
-        TreeNode
+        TreeNode.build_tree()
 
         image = batch["image"]
         targets = batch["code"].long()
