@@ -193,6 +193,36 @@ class Decoder(nn.Module):
         return output
     
 
+def compute_kl_loss(true_means, true_log_vars, pred_means, pred_log_vars):
+    """
+    计算多个独立二维高斯分布的KL散度，并返回平均值。
+    
+    参数:
+        true_means: 真实分布的均值，形状为 [n, 2]
+        true_log_vars: 真实分布的方差的对数，形状为 [n, 2] (即 log(σ^2))
+        pred_means: 预测分布的均值，形状为 [n, 2]
+        pred_log_vars: 预测分布的方差的对数，形状为 [n, 2] (即 log(σ^2))
+    
+    返回:
+        kl_loss: 标量，所有分布KL散度的平均值
+    """
+    # 确保方差非负（通过指数运算）
+    true_vars = torch.exp(true_log_vars)  # 形状 [n, 2]
+    pred_vars = torch.exp(pred_log_vars)  # 形状 [n, 2]
+    
+    # 计算KL散度的三个项（按维度独立计算）
+    term1 = pred_log_vars - true_log_vars  # log(σ2^2 / σ1^2)
+    term2 = true_vars / pred_vars         # σ1^2 / σ2^2
+    term3 = (pred_means - true_means)**2 / pred_vars  # (μ2 - μ1)^2 / σ2^2
+    
+    # 合并所有项，并沿特征维度（dim=1）求和
+    kl_per_dist = 0.5 * (term1 + term2 + term3 - 1).sum(dim=1)  # 形状 [n]
+    
+    # 对所有分布取平均值
+    kl_loss = torch.mean(kl_per_dist)
+    return kl_loss
+
+
 class Vit2Box(nn.Module):
     def __init__(self, 
                  vocab_size, 
@@ -206,8 +236,15 @@ class Vit2Box(nn.Module):
                  dropout=0.1, 
                  emb_dropout=0.1,
                  proof_of_concept=False,
+                 kl_loss=None,
                  ):
         super().__init__()
+
+        self.kl_loss = (kl_loss == '1')
+
+        print({
+            "kl_loss": self.kl_loss,
+        })
 
         self.encoder = ViT(
             image_size = image_size,
@@ -248,7 +285,8 @@ class Vit2Box(nn.Module):
         outs = self.decoder(cap_emb, memory, 
                             tgt_key_padding_mask = cap_padding_mask)
 
-        preds_box = F.softplus(self.generator(outs))  # (batch, seq_length, num_classes)
+        # preds_box = F.softplus(self.generator(outs))  # (batch, seq_length, num_classes)
+        preds_box = self.generator(outs).sigmoid()  # (batch, seq_length, num_classes)
 
         # print(preds_box[0, 1, :])
         # print(truth_box[0, 1, :])
@@ -274,7 +312,14 @@ class Vit2Box(nn.Module):
         preds_box_convert = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
         truth_box_convert = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
 
-        loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
+        if not getattr(self, "kl_loss", False):
+
+            loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
+
+        else:
+            
+            loss = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0) ** 2), 
+                                   preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0) ** 2))
 
         return {
             "loss": loss,
