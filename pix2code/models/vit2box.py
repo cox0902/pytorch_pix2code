@@ -237,9 +237,11 @@ class Vit2Box(nn.Module):
                  emb_dropout=0.1,
                  proof_of_concept=False,
                  kl_loss=None,
+                 loss="giou"
                  ):
         super().__init__()
 
+        self.loss = loss
         self.kl_loss = (kl_loss == '1')
 
         print({
@@ -267,7 +269,14 @@ class Vit2Box(nn.Module):
         self.positional_encoding = PositionalEncoding(dim, dropout=dropout)
         self.generator = nn.Linear(dim, 4)
 
-        self.criterion = torchvision.ops.generalized_box_iou_loss
+        if self.loss == "giou":
+            self.criterion = torchvision.ops.generalized_box_iou_loss
+        elif self.loss == "diou":
+            self.criterion = torchvision.ops.distance_box_iou_loss
+        elif self.loss == "ciou":
+            self.criterion = torchvision.ops.complete_box_iou_loss
+        else:
+            assert False
 
         if self.kl_loss:
             self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
