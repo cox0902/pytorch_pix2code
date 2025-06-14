@@ -312,14 +312,12 @@ class Vit2Box(nn.Module):
         preds_box_convert = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
         truth_box_convert = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
 
-        if not getattr(self, "kl_loss", False):
+        loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
 
-            loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
-
-        else:
+        if getattr(self, "kl_loss", False):
             
-            loss = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0) ** 2), 
-                                   preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0) ** 2))
+            loss += 0.5 * compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0) ** 2), 
+                                          preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0) ** 2))
 
         return {
             "loss": loss,
