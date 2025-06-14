@@ -268,6 +268,9 @@ class Vit2Box(nn.Module):
         self.generator = nn.Linear(dim, 4)
 
         self.criterion = torchvision.ops.generalized_box_iou_loss
+
+        if self.kl_loss:
+            self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
     
     def forward(self, batch):
         img = batch["image"]
@@ -314,16 +317,28 @@ class Vit2Box(nn.Module):
 
         loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
 
-        if getattr(self, "kl_loss", False):
-            
-            loss += 0.5 * compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0) ** 2), 
-                                          preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0) ** 2))
-
-        return {
+        r = {
             "loss": loss,
             "scores": preds_box_convert, 
             "targets": truth_box_convert
         }
+
+        if getattr(self, "kl_loss", False):
+            
+            p1 = 0.5 * torch.exp(-self.log_vars[0])
+            p2 = 0.5 * torch.exp(-self.log_vars[1])
+
+            r["loss/p1"] = p1
+            r["loss/p2"] = p2
+            
+            loss = p1 * loss + p2 * compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                                    preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+            loss += self.log_vars[0] + self.log_vars[1]
+            
+            r["loss/box"] = r["loss"]
+            r["loss"] = loss
+
+        return r
     
     def encode(self, img):
         return self.encoder(img)
