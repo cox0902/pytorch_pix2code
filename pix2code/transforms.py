@@ -1,10 +1,13 @@
 from typing import *
 
+import numpy as np
+
 import torch
 import torchvision.transforms.v2 as T
 
 
 class PresetEval:
+    
     def __init__(
             self,
             mean = (0.485, 0.456, 0.406),

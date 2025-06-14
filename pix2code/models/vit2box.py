@@ -248,7 +248,7 @@ class Vit2Box(nn.Module):
         outs = self.decoder(cap_emb, memory, 
                             tgt_key_padding_mask = cap_padding_mask)
 
-        preds_box = self.generator(outs).sigmoid()  # (batch, seq_length, num_classes)
+        preds_box = F.softplus(self.generator(outs))  # (batch, seq_length, num_classes)
 
         # print(preds_box[0, 1, :])
         # print(truth_box[0, 1, :])

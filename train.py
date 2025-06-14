@@ -66,6 +66,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--has-tree", action="store_true", default=False)
     parser.add_argument("--mask-tree", action="store_true", default=False)
     parser.add_argument("--force-valid", action="store_true", default=False)
+    parser.add_argument("--nest-rect", action="store_true", default=False)
 
     parser.add_argument("-b", "--batch-size", default=64, type=int)
     parser.add_argument("-j", "--workers", default=4, type=int)
@@ -242,7 +243,7 @@ def main(args):
 
     if args.split_path is not None:
         split = np.load(args.split_path)
-        split_train = split["train"]
+        split_train = split["train"] if not args.proof_of_concept else split["valid"]
         split_valid = split["valid"]
         split_test = split["test"]
     else:
@@ -267,6 +268,7 @@ def main(args):
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
                                     mask_rect=mask_rect,
+                                    nest_rect=args.nest_rect,
                                     has_tree=args.has_tree,
                                     mask_tree=args.mask_tree,
                                     force_add_channel=args.force_add_channel)
@@ -290,6 +292,7 @@ def main(args):
                                         has_comma=has_comma, 
                                         has_rect=has_rect, 
                                         mask_rect=mask_rect,
+                                        nest_rect=args.nest_rect,
                                         has_tree=args.has_tree,
                                         mask_tree=args.mask_tree,
                                         force_add_channel=args.force_add_channel)
@@ -332,10 +335,10 @@ def main(args):
         #
 
         trainer = Trainer(model=model, 
-                        optimizer=optimizer, 
-                        generator=generator,
-                        is_ema=args.ema, 
-                        use_amp=args.amp)
+                          optimizer=optimizer, 
+                          generator=generator,
+                          is_ema=args.ema, 
+                          use_amp=args.amp)
         trainer.epochs_early_stop = args.epochs_early_stop
         trainer.epochs_adjust_lr = args.epochs_adjust_lr
         trainer.early_stop = args.early_stop
@@ -394,6 +397,7 @@ def main(args):
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
                                     mask_rect=mask_rect,
+                                    nest_rect=args.nest_rect,
                                     has_tree=args.has_tree,
                                     mask_tree=args.mask_tree,
                                     force_add_channel=args.force_add_channel)

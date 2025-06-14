@@ -54,11 +54,17 @@ class ImageCodeDataset(Dataset):
                 return False
         return True
 
-    def __init__(self, image_path: str, code_path: str, split: Optional[Any], transform: Optional[Any] = None, 
-                 label_trans = None, multi_label: str = None, label_aug_prob: float = None,
+    def __init__(self, image_path: str, code_path: str, split: Optional[Any], 
+                 transform: Optional[Any] = None, 
+                 label_trans = None, 
+                 multi_label: str = None, 
+                 label_aug_prob: float = None,
                  has_comma: bool = True, 
-                 has_rect: bool = False, mask_rect: bool = False, 
-                 has_tree: bool = False, mask_tree: bool = False,
+                 has_rect: bool = False, 
+                 mask_rect: bool = False, 
+                 nest_rect: bool = False,
+                 has_tree: bool = False, 
+                 mask_tree: bool = False,
                  force_add_channel: bool = False):
         super().__init__()
         self.image_path = image_path
@@ -79,6 +85,7 @@ class ImageCodeDataset(Dataset):
         self.has_comma = has_comma
         self.has_rect = has_rect
         self.mask_rect = mask_rect
+        self.nest_rect = nest_rect
         self.normalize_rect = True
         
         self.hi = h5py.File(image_path, "r")
@@ -207,21 +214,49 @@ class ImageCodeDataset(Dataset):
         if self.has_rect:
             #
             if not self.mask_rect:
-                rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
-                ids = self.ids[code_idx]
-                ivs = self.codes[code_idx]
-                for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
-                    if each_iv <= 7:
-                        continue
-                    loc = np.where(np.logical_and(
-                        self.labels[:, 0] == img_idx,
-                        self.labels[:, 1] == each_id
-                    ))
-                    assert len(loc[0]) == 1, item["code"]
-                    rects[i] = self.rects[loc[0]]
-                if self.normalize_rect:
-                    item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+                if not self.nest_rect:
+                    rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
+                    ids = self.ids[code_idx]
+                    ivs = self.codes[code_idx]
+                    for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
+                        if each_iv <= 7:
+                            continue
+                        loc = np.where(np.logical_and(
+                            self.labels[:, 0] == img_idx,
+                            self.labels[:, 1] == each_id
+                        ))
+                        assert len(loc[0]) == 1, item["code"]
+                        rects[i] = self.rects[loc[0]]
+                    if self.normalize_rect:
+                        item["rect"] = box_xyxy_to_cxcywh(rects) / image.size(-1)
+                    else:
+                        item["rect"] = rects
                 else:
+                    rects = np.stack((np.zeros_like(code, dtype=np.float32), ) * 4, axis=-1)
+                    ids = self.ids[code_idx]
+                    ivs = self.codes[code_idx]
+                    last = (0, 0, image.size(-2), image.size(-1))
+                    queue = [last]
+                    for i, (each_id, each_iv) in enumerate(zip(ids, ivs)):
+                        if each_iv <= 7:
+                            if each_iv == 5:
+                                queue.append(last)
+                            elif each_iv == 6:
+                                queue.pop()
+                            continue
+                        loc = np.where(np.logical_and(
+                            self.labels[:, 0] == img_idx,
+                            self.labels[:, 1] == each_id
+                        ))
+                        assert len(loc[0]) == 1, item["code"]
+                        rect = self.rects[loc[0]][0]
+                        prect = queue[-1]
+                        assert rect[0] >= prect[0] and rect[1] >= prect[1] and rect[2] <= prect[2] and rect[3] <= prect[3] 
+                        last = rect
+                        rect = (rect[0] - prect[0], rect[1] - prect[1], rect[2] - prect[0], rect[3] - prect[1])
+                        rect = ((rect[0] + rect[2]) * 0.5, (rect[1] + rect[3]) * 0.5, rect[2] - rect[0], rect[3] - rect[1])
+                        pw, ph = prect[2] - prect[0], prect[3] - prect[1] 
+                        rects[i] = rect[0] / pw, rect[1] / ph, rect[2] / pw, rect[3] / ph
                     item["rect"] = rects
             else:
                 masks = np.zeros((code.shape[0], 256, 256), dtype=np.float32)

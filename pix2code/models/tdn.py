@@ -1,10 +1,11 @@
 from typing import *
 
-import zss
-import h5py
 import numpy as np
 import math
 import copy
+from weakref import proxy
+from apted import APTED, Config
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -198,62 +199,7 @@ class Decoder(nn.Module):
 
         return output
     
-
-def retrieve_fn_old(query, index_path, image_path, code_path: str):
-    index = faiss.read_index(index_path)
-    _, I = index.search(query, k=1)
-    del index
-    docids = I[:, 0]  # .ravel()
-
-    r = {}
-
-    if code_path.endswith(".npy"):
-        codes = np.load(code_path, "r")
-        r["code_embs"] = torch.Tensor(codes[docids])
-    else:
-        with h5py.File(code_path, "r") as h:
-            codes = []
-            for docid in docids:
-                codes.append(torch.LongTensor(h["ivs"][docid]))
-            r["codes"] = torch.stack(codes, dim=0)
-    
-    images = np.load(image_path, "r")
-    r["image_embs"] = torch.Tensor(images[docids])
-    del images
-    return r
-
-
 #
-
-global_index = None
-global_codes = None
-global_code_embs = None
-global_images = None
-
-def retrieve_fn(query, index_path, image_path, code_path: str):
-    global global_index, global_codes, global_code_embs, global_images
-
-    if global_index is None:
-        global_index = faiss.read_index(index_path)
-        if code_path.endswith(".npy"):
-            global_code_embs = np.load(code_path, "r")
-        else:
-            with h5py.File(code_path, "r") as h:
-                global_codes = h["ivs"][:]
-        global_images = np.load(image_path, "r")
-
-    _, I = global_index.search(query, k=1)
-    docids = I[:, 0]  # .ravel()
-
-    r = {}
-
-    if global_code_embs is not None:
-        r["code_embs"] = torch.Tensor(global_code_embs[docids])
-    else:
-        r["codes"] = torch.LongTensor(global_codes[docids])
-    
-    r["image_embs"] = torch.Tensor(global_images[docids])
-    return r
 
 
 def _mask_pads(target, ll, smooth_obj):
@@ -289,10 +235,9 @@ class BottleNeck(nn.Module):
             emb_dropout=emb_dropout
         )
 
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim, nhead=num_head, batch_first=True)
-        self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
-
+        # encoder_layer = nn.TransformerEncoderLayer(
+        #     d_model=dim, nhead=num_head, batch_first=True)
+        # self.txt_encoder = nn.TransformerEncoder(encoder_layer, num_layer)
 
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=dim, nhead=num_head, batch_first=True)
@@ -303,7 +248,31 @@ class BottleNeck(nn.Module):
 
     def forward(self, images, inputs):
 
-        cap_mask, cap_padding_mask = create_mask(inputs)
+        _, cap_padding_mask = create_mask(inputs)
+
+        memory = self.img_encoder(images)
+
+        cap_emb = self.positional_encoding(self.tok_emb(inputs))
+        outs = self.decoder(cap_emb, memory, tgt_key_padding_mask = cap_padding_mask)
+        return outs
+
+
+class CustomConfig(Config):
+   
+    def rename(self, node1, node2):
+        """Compares attribute .value of trees"""
+        return 1 if node1.iv != node2.iv else 0
+
+    def children(self, node):
+        """Get left and right children of binary tree"""
+        return node.children
+    
+
+def compute_ted(src_tree, tgt_tree):
+    apted = APTED(src_tree, tgt_tree, CustomConfig())
+    ted = apted.compute_edit_distance()
+    mapping = apted.compute_edit_mapping() 
+    return ted, mapping
 
 
 class TreeEditNet(nn.Module):
@@ -348,7 +317,8 @@ class TreeEditNet(nn.Module):
         self.insert_head = nn.Linear(dim, 3)
         self.update_head = nn.Linear(dim, vocab_size)
 
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+        self.criterion_delete = nn.BCEWithLogitsLoss(ignore_index=-1)
+        self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
 
         self.fusing = nn.Linear(dim * 2, dim)
     
@@ -357,8 +327,8 @@ class TreeEditNet(nn.Module):
         #
 
         with torch.no_grad():
-            predicts, _, _ = self.generator.search(self.backbone, batch)
-            predicts = predicts.detach().cpu()
+            predict, _, _ = self.generator.search(self.backbone, batch)
+            predict = predict.detach().cpu()
 
         #
 
@@ -366,56 +336,40 @@ class TreeEditNet(nn.Module):
         targets = batch["code"].long()
         targets_lens = batch["code_len"]
 
-        tree_src = TreeNode.build_tree()
-        tree_dst = TreeNode.build_tree()
+
+        #
+
+        tree_src = TreeNode.build_tree(predict)
+        tree_dst = TreeNode.build_tree(targets)
+
+        _, mapping = compute_ted(tree_src, tree_dst)
 
 
-        cap_mask, cap_padding_mask = create_mask(tgt_input)
+        # 
 
-        memory = self.img_encoder(img)
-        # print(memory.shape)  # (batch_size, 257, 512)
+        for node_src, node_dst in mapping:
+            if node_dst is None:  # DELETE
+                node_src.align = None
+            elif node_src is None:  # INSERT
+                node_dst.align = None
+            else:  # UPDATE
+                node_src.align = proxy(node_dst)
+                node_dst.align = proxy(node_src)
+
+        outputs = self.backbone(image, predict)
+        outputs = self.delete_head(outputs)
+
+        predict_delete = predict.mask_fill(targets == 0, -1) 
+        targets_delete = targets.mask_fill(targets == 0, -1)
+
+        loss_delete = self.criterion_delete(predict_delete.view(-1, predict_delete.size(-1)),
+                                            targets_delete.view(-1, targets_delete.size(-1)))
+
+        #
+
         
-        batch_size = img.size(0)
 
-        ret_memory = rearrange(memory, "b s d -> (b s) d")
-        # ret_memory = memory[:, 0, :]
-
-        r = self.retrieve_fn(ret_memory.detach().cpu().numpy())
-        # embb (batch_size * 257, 512)
-        # code (batch_size * 257, 356)
-        # print(r["image_embs"].shape, r["code_embs"].shape)
-        # code = code.to(memory.device)
-
-        if self.has_encoder:
-            code = rearrange(code, "(b s) d -> b s d", b=batch_size)
-            inp_enc_all = torch.zeros((batch_size, 257, 512), dtype=torch.float32).to(memory.device)
-            for i in range(257):
-                batched_code = code[:, i, :].to(memory.device)
-                # print(batched_code.shape)
-                inp_emb = self.positional_encoding(self.tok_emb(batched_code))
-                # print(inp_emb.shape)
-                inp_enc = self.txt_encoder(inp_emb, src_key_padding_mask=(batched_code == 0))
-                inp_enc_all[:, i, :] = inp_enc[:, -1, :]
-                del batched_code
-                del inp_emb
-                del inp_enc
-            print("inp_enc_all:", inp_enc_all.shape)
-        # else:
-            
-        # image_embs = r["image_embs"].to(ret_memory.device)
-        # image_embs = rearrange(image_embs, "(b s) d -> b s d", b=batch_size)
-        # doc_scores = torch.bmm(memory, image_embs.transpose(1, 2))
-        # print(doc_scores.shape)  # (batch_size, 257, 257)
-
-        code_embs = r["code_embs"].to(ret_memory.device)
-        code_embs = rearrange(code_embs, "(b s) d -> b s d", b=batch_size)
-        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
-
-        cap_emb = self.positional_encoding(self.tok_emb(tgt_input))
-        outs = self.decoder(cap_emb, fusing_memory, tgt_mask = cap_mask, 
-                            tgt_key_padding_mask = cap_padding_mask)
-
-        outputs = self.generator(outs)  # (batch, seq_length, num_classes)
+        #
 
         tgt_out = captions[:, 1:]
         loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
@@ -426,6 +380,9 @@ class TreeEditNet(nn.Module):
 
         return {
             "loss": loss,
+            "loss/delete": loss_delete,
+            "loss/insert": loss_insert,
+            "loss/update": loss_update,
             "scores": torch.nn.functional.softmax(scores, dim=-1), 
             "targets": targets
         }

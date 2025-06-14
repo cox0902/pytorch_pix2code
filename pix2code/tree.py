@@ -2,6 +2,7 @@
 from typing import *
 
 from functools import partial
+from weakref import proxy
 
 import torch
 
@@ -33,7 +34,16 @@ class TreeNode:
         self.right: TreeNode = None
         self.height = 1 if parent is None else parent.height + 1
         self.score = 0
-        self.count = 1
+
+    def count(self) -> int:
+        counts = [child.count() for child in self.children]
+        return sum(counts) + 1
+    
+    def ravel(self) -> List["TreeNode"]:
+        descendents = [proxy(self)]
+        for each in self.children:
+            descendents.extend(each.ravel())
+        return descendents
 
     def __repr__(self):
         return f"{self.iv}#{self.id[-3:]}"
@@ -75,10 +85,26 @@ class TreeNode:
 
     def insert(self, 
                iv, 
-               device: Optional[torch.device] = None):
+               at: Optional[int] = None,
+               on: Optional[Literal[-1, 0, 1]] = 0,
+               device: Optional[torch.device] = None) -> "TreeNode":
+
+        assert 0 <= at <= len(self.children)
+        l_part = self.children[:at]
+        r_part = self.children[at:]
+
         node = TreeNode(iv, parent=self, device=device)
-        node.children = self.children
-        self.children = [node]
+
+        assert on in [-1, 0, 1]
+        if on == 0:
+            self.children = l_part + [node] + r_part
+        elif on == -1:
+            self.children = [node] + r_part
+            node.children = l_part
+        else:
+            self.children = l_part + [node]
+            node.children = r_part
+
         for each in node.children:
             each.parent = node
         return node
