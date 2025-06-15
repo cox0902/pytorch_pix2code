@@ -83,27 +83,24 @@ class TreeNode:
         for each in self.children:
             each.parent = self.parent
 
-    def insert(self, 
+    def insert(self: "TreeNode", 
                iv, 
-               at: Optional[int] = None,
-               on: Optional[Literal[-1, 0, 1]] = 0,
-               device: Optional[torch.device] = None) -> "TreeNode":
+               i: int = 0,
+               j: int = 0,
+               device: Optional[torch.device] = None):
 
-        assert 0 <= at <= len(self.children)
-        l_part = self.children[:at]
-        r_part = self.children[at:]
+        assert 0 <= i <= len(self.children)
+        assert 0 <= j <= len(self.children)
+        i, j = min(i, j), max(i, j)
+
+        l_part = self.children[:i]
+        m_part = self.children[i:j]
+        r_part = self.children[j:]
 
         node = TreeNode(iv, parent=self, device=device)
 
-        assert on in [-1, 0, 1]
-        if on == 0:
-            self.children = l_part + [node] + r_part
-        elif on == -1:
-            self.children = [node] + r_part
-            node.children = l_part
-        else:
-            self.children = l_part + [node]
-            node.children = r_part
+        self.children = l_part + [node] + r_part
+        node.children = m_part
 
         for each in node.children:
             each.parent = node

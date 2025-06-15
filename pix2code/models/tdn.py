@@ -275,6 +275,41 @@ def compute_ted(src_tree, tgt_tree):
     return ted, mapping
 
 
+def _build_list(n: "TreeNode", fn, ivs: List[int]):
+    ivs.append(fn(n, n.iv))
+    if len(n.children) > 0:
+        ivs.append(fn(None, 5))  # [LB]
+        for each in n.children:
+            if each.get_iv_premitive() in [3, 4]:
+                continue
+            _build_list(each, fn, ivs)
+        ivs.append(fn(None, 6))  # [RB]
+            
+
+def build_list(n, fn) -> List[int]:
+    ivs = [fn(None, 3)]  # [START]
+    for each in n.children:
+        if each.get_iv_premitive() in [3, 4]:
+            continue
+        _build_list(each, fn, ivs)
+    ivs.append(fn(None, 4))  # [END]
+    return ivs
+
+
+def make_default(n, v):
+    return v
+
+
+def make_delete_label(n, v):
+    if n:
+        return 0 if n.align else 1
+    return -1
+
+
+def make_update_label(n, v):
+    return n.align.iv if n else v
+
+
 class TreeEditNet(nn.Module):
 
     def __init__(self, 
@@ -327,8 +362,8 @@ class TreeEditNet(nn.Module):
         #
 
         with torch.no_grad():
-            predict, _, _ = self.generator.search(self.backbone, batch)
-            predict = predict.detach().cpu()
+            predicts, _, _ = self.generator.search(self.backbone, batch)
+            predicts = predicts.detach().cpu()
 
         #
 
@@ -339,33 +374,68 @@ class TreeEditNet(nn.Module):
 
         #
 
-        tree_src = TreeNode.build_tree(predict)
-        tree_dst = TreeNode.build_tree(targets)
+        sources_delete = predicts[:, :, :]
+        targets_delete = torch.full_like(sources_delete, -1)
 
-        _, mapping = compute_ted(tree_src, tree_dst)
+        sources_update = torch.full_like(sources_delete, -1)
+        targets_update = torch.full_like(sources_delete, -1)
+
+        for i, (src, dst) in enumerate(zip(predicts, targets)):
+
+            tree_src = TreeNode.build_tree(src)
+            tree_dst = TreeNode.build_tree(dst)
+
+            _, mapping = compute_ted(tree_src, tree_dst)
 
 
-        # 
+            # 
 
-        for node_src, node_dst in mapping:
-            if node_dst is None:  # DELETE
-                node_src.align = None
-            elif node_src is None:  # INSERT
-                node_dst.align = None
-            else:  # UPDATE
-                node_src.align = proxy(node_dst)
-                node_dst.align = proxy(node_src)
+            for node_src, node_dst in mapping:
+                if node_dst is None:  # DELETE
+                    node_src.align = None
+                elif node_src is None:  # INSERT
+                    node_dst.align = None
+                else:  # UPDATE
+                    node_src.align = proxy(node_dst)
+                    node_dst.align = proxy(node_src)
 
-        outputs = self.backbone(image, predict)
-        outputs = self.delete_head(outputs)
+            target_delete = build_list(tree_src, make_delete_label)
+            targets_delete[i, :len(target_delete), :] = target_delete
 
-        predict_delete = predict.mask_fill(targets == 0, -1) 
+            #
+
+            for node_src, node_dst in mapping:
+                if node_dst is None:  # DELETE
+                    node_src.delete()
+
+            source_update = build_list(tree_src, make_default)
+            sources_update[i, :len(source_update), :] = source_update
+
+            target_update = build_list(tree_src, make_update_label)
+            targets_update[i, :len(target_update), :] = target_update
+
+            #
+
+            descendents = tree_src.ravel()
+            for _ in range(len(descendents) // 2):
+                n: TreeNode = np.random.choice(descendents)
+                insert_on = np.random.choice([-1, 0, 1])  # left, mid, right
+                insert_at = 0
+                if len(n.children) > 0:
+                    insert_at = np.random.randint(0, len(n.children))
+                n.insert(2, at=insert_at, on=insert_on)
+
+            
+
+        predict_delete = outputs.mask_fill(targets == 0, -1) 
         targets_delete = targets.mask_fill(targets == 0, -1)
 
         loss_delete = self.criterion_delete(predict_delete.view(-1, predict_delete.size(-1)),
                                             targets_delete.view(-1, targets_delete.size(-1)))
 
         #
+
+        
 
         
 

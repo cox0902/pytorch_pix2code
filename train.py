@@ -43,7 +43,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--metric", default="auc", type=str)
     parser.add_argument("--stop-metric", type=str)
     parser.add_argument("--eval-metric", type=str)
-    parser.add_argument("--early-stop", action="store_true")
+    parser.add_argument("--early-stop", action="store_true", default=False)
     parser.add_argument("--epochs-early-stop", default=10, type=int)
     parser.add_argument("--epochs-adjust-lr", default=4, type=int)
     parser.add_argument("--logit-adjustment-train", type=str)
@@ -339,13 +339,14 @@ def main(args):
                           generator=generator,
                           is_ema=args.ema, 
                           use_amp=args.amp)
-        trainer.epochs_early_stop = args.epochs_early_stop
-        trainer.epochs_adjust_lr = args.epochs_adjust_lr
-        trainer.early_stop = args.early_stop
+        
+    trainer.epochs_early_stop = args.epochs_early_stop
+    trainer.epochs_adjust_lr = args.epochs_adjust_lr
+    trainer.early_stop = args.early_stop
 
-        if args.grad_clip:
-            trainer.grad_clip = 1.
-            trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
+    if args.grad_clip:
+        trainer.grad_clip = 1.
+        trainer.grad_clip_fn = nn.utils.clip_grad.clip_grad_value_
 
     #
 

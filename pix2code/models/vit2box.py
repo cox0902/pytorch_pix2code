@@ -245,6 +245,7 @@ class Vit2Box(nn.Module):
         self.kl_loss = (kl_loss == '1')
 
         print({
+            "loss": self.loss,
             "kl_loss": self.kl_loss,
         })
 
