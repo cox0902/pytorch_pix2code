@@ -369,7 +369,7 @@ class TreeEditNet(nn.Module):
 
         images = batch["image"]
         targets = batch["code"].long()
-        targets_lens = batch["code_len"]
+        # targets_lens = batch["code_len"]
 
         #
 
