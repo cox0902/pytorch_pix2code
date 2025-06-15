@@ -541,8 +541,9 @@ class Trainer:
                 if epochs_since_improvement == self.epochs_early_stop:
                     if self.early_stop:
                         break
-                if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
-                    self.adjust_learning_rate(0.8)
+                if self.epochs_adjust_lr > 0:
+                    if epochs_since_improvement > 0 and epochs_since_improvement % self.epochs_adjust_lr == 0:
+                        self.adjust_learning_rate(0.8)
 
             begin_epoch = getattr(self.get_inner_model(), "begin_epoch", None)
             if begin_epoch is not None:

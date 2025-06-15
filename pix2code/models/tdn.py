@@ -367,10 +367,9 @@ class TreeEditNet(nn.Module):
 
         #
 
-        image = batch["image"]
+        images = batch["image"]
         targets = batch["code"].long()
         targets_lens = batch["code_len"]
-
 
         #
 
@@ -380,13 +379,17 @@ class TreeEditNet(nn.Module):
         sources_update = torch.full_like(sources_delete, -1)
         targets_update = torch.full_like(sources_delete, -1)
 
+        sources_insdel_list = []
+        targets_insdel_list = []
+        sources_insupd_list = []
+        targets_insupd_list = []
+
         for i, (src, dst) in enumerate(zip(predicts, targets)):
 
             tree_src = TreeNode.build_tree(src)
             tree_dst = TreeNode.build_tree(dst)
 
             _, mapping = compute_ted(tree_src, tree_dst)
-
 
             # 
 
@@ -419,42 +422,116 @@ class TreeEditNet(nn.Module):
             descendents = tree_src.ravel()
             for _ in range(len(descendents) // 2):
                 n: TreeNode = np.random.choice(descendents)
-                insert_on = np.random.choice([-1, 0, 1])  # left, mid, right
-                insert_at = 0
+                insert_i, insert_j = 0, 0
                 if len(n.children) > 0:
-                    insert_at = np.random.randint(0, len(n.children))
-                n.insert(2, at=insert_at, on=insert_on)
+                    insert_i = np.random.randint(0, len(n.children) + 1)
+                    insert_j = np.random.randint(0, len(n.children) + 1)
+                n.insert(2, i=insert_i, j=insert_j)
 
+            _, mapping = compute_ted(tree_src, tree_dst)
+
+            ## 
+
+            for node_src, node_dst in mapping:
+                if node_dst is None:  # DELETE
+                    node_src.align = None
+                elif node_src is None:  # INSERT
+                    node_dst.align = None
+                else:  # UPDATE
+                    node_src.align = proxy(node_dst)
+                    node_dst.align = proxy(node_src)
+
+            sources_insdel_list.append(build_list(tree_src, make_default))
+            targets_insdel_list.append(build_list(tree_src, make_delete_label))
+
+            ##
+
+            for node_src, node_dst in mapping:
+                if node_dst is None:  # DELETE
+                    node_src.delete()
+                elif node_src is None:  # INSERT
+                    node_dst.delete()
+
+            sources_insupd_list.append(build_list(tree_src, make_default))
+            targets_insupd_list.append(build_list(tree_dst, make_default))
             
+        #
 
-        predict_delete = outputs.mask_fill(targets == 0, -1) 
-        targets_delete = targets.mask_fill(targets == 0, -1)
+        max_insdel = targets.size(1)
+        max_insdel = max(max_insdel, *[len(each) for each in sources_insdel_list])
+        max_insdel = max(max_insdel, *[len(each) for each in targets_insdel_list])
+        
+        max_insupd = targets.size(1)
+        max_insupd = max(max_insupd, *[len(each) for each in sources_insupd_list])
+        max_insupd = max(max_insupd, *[len(each) for each in targets_insupd_list])
 
-        loss_delete = self.criterion_delete(predict_delete.view(-1, predict_delete.size(-1)),
-                                            targets_delete.view(-1, targets_delete.size(-1)))
+        sources_insdel = torch.full(targets.size(0), max_insdel, targets.size(-1), -1)
+        targets_insdel = torch.full(targets.size(0), max_insdel, targets.size(-1), -1)
+        sources_insupd = torch.full(targets.size(0), max_insupd, targets.size(-1), -1)
+        targets_insupd = torch.full(targets.size(0), max_insupd, targets.size(-1), -1)
+
+        for i, each in enumerate(sources_insdel_list):
+            sources_insdel[i, :len(each), :] = each
+
+        for i, each in enumerate(targets_insdel_list):
+            targets_insdel[i, :len(each), :] = each
+
+        for i, each in enumerate(sources_insupd_list):
+            sources_insupd[i, :len(each), :] = each
+
+        for i, each in enumerate(targets_insupd_list):
+            targets_insupd[i, :len(each), :] = each
 
         #
 
-        
+        outputs = self.backbone(images, sources_delete)
+        predict_delete = self.delete_head(outputs)
 
-        
+        loss_delete = self.criterion_delete(
+            predict_delete.view(-1, predict_delete.size(-1)),
+            targets_delete.view(-1, targets_delete.size(-1))
+        )
 
         #
 
-        tgt_out = captions[:, 1:]
-        loss = self.criterion(outputs.view(-1, outputs.size(-1)), tgt_out.reshape(-1))
+        outputs = self.backbone(images, sources_update)
+        predict_update = self.update_head(outputs)
 
-        decode_lengths = (caplens - 1).cpu()
-        scores = nn.utils.rnn.pack_padded_sequence(outputs, decode_lengths, batch_first=True, enforce_sorted=False).data
-        targets = nn.utils.rnn.pack_padded_sequence(tgt_out, decode_lengths, batch_first=True, enforce_sorted=False).data
+        loss_update = self.criterion_update(
+            predict_update.view(-1, predict_update.size(-1)),
+            targets_update.view(-1, targets_update.size(-1))
+        )
+
+        #
+
+        outputs = self.backbone(images, sources_insdel)
+        predict_insdel = self.delete_head(outputs)
+
+        loss_insdel = self.criterion_delete(
+            predict_insdel.view(-1, predict_insdel.size(-1)),
+            targets_insdel.view(-1, targets_insdel.size(-1))
+        )
+        
+        #
+
+        outputs = self.backbone(images, sources_insupd)
+        predict_insupd = self.update_head(outputs)
+
+        loss_insupd = self.criterion_update(
+            predict_insupd.view(-1, predict_insupd.size(-1)),
+            targets_insupd.view(-1, targets_insupd.size(-1))
+        )
+
+        #
+
+        loss = loss_delete + loss_update + loss_insdel + loss_insupd
 
         return {
             "loss": loss,
             "loss/delete": loss_delete,
-            "loss/insert": loss_insert,
             "loss/update": loss_update,
-            "scores": torch.nn.functional.softmax(scores, dim=-1), 
-            "targets": targets
+            "loss/insdel": loss_insdel,
+            "loss/insupd": loss_insupd
         }
     
     def encode(self, img):
