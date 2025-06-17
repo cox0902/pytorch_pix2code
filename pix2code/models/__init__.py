@@ -44,6 +44,9 @@ def get_model_class_by_name(name):
     elif name == "Vit2Box".lower():
         from .vit2box import Vit2Box
         return Vit2Box
+    elif name == "ten":
+        from .ten import TreeEditNet
+        return TreeEditNet
     else:
         return None
 

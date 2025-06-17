@@ -626,6 +626,9 @@ class AdvMetrics:
     def add_metric(self, name):
         self.metrics.append(registered_scores[name])
 
+    def add_metric_obj(self, obj):
+        self.metrics.append(obj)
+
     def reset(self, batch_count):
         self.batch_time.reset()
         self.start_time = time.perf_counter()

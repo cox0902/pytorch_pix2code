@@ -223,6 +223,16 @@ def compute_kl_loss(true_means, true_log_vars, pred_means, pred_log_vars):
     return kl_loss
 
 
+def compute_w2_loss(pb: torch.Tensor, tb: torch.Tensor):
+    pcx, pcy, pw, ph = pb.unbind(dim=-1)
+    tcx, tcy, tw, th = tb.unbind(dim=-1)
+
+    d = ((pcx - tcx) ** 2 + (pcy - tcy) ** 2) ** 0.5
+    w = 0.5 * pw + 0.5 * tw - (pw * tw) ** 0.5
+    h = 0.5 * ph + 0.5 * th - (ph * th) ** 0.5
+    return torch.mean(d + w + h)
+
+
 class Vit2Box(nn.Module):
     def __init__(self, 
                  vocab_size, 
@@ -237,7 +247,8 @@ class Vit2Box(nn.Module):
                  emb_dropout=0.1,
                  proof_of_concept=False,
                  kl_loss=None,
-                 loss="giou"
+                 loss="giou",
+                 resnet=None
                  ):
         super().__init__()
 
@@ -249,17 +260,20 @@ class Vit2Box(nn.Module):
             "kl_loss": self.kl_loss,
         })
 
-        self.encoder = ViT(
-            image_size = image_size,
-            patch_size = patch_size,
-            dim = dim,
-            depth = num_layer,
-            heads = num_head,
-            mlp_dim = mlp_dim,
-            dropout = dropout,
-            emb_dropout = emb_dropout
-        )
-        # self.encoder = torchvision.models.vit_b_16()
+        if resnet is not None:
+            self.encoder = resnet
+        else:
+            self.encoder = ViT(
+                image_size = image_size,
+                patch_size = patch_size,
+                dim = dim,
+                depth = num_layer,
+                heads = num_head,
+                mlp_dim = mlp_dim,
+                dropout = dropout,
+                emb_dropout = emb_dropout
+            )
+            # self.encoder = torchvision.models.vit_b_16()
 
         self.decoder = Decoder(
             dim = dim, 
@@ -276,6 +290,8 @@ class Vit2Box(nn.Module):
             self.criterion = torchvision.ops.distance_box_iou_loss
         elif self.loss == "ciou":
             self.criterion = torchvision.ops.complete_box_iou_loss
+        elif self.loss == "kl" or self.loss == "w2":
+            self.criterion = None
         else:
             assert False
 
@@ -325,12 +341,21 @@ class Vit2Box(nn.Module):
         preds_box_convert = torchvision.ops.box_convert(preds_box, "cxcywh", "xyxy")
         truth_box_convert = torchvision.ops.box_convert(truth_box, "cxcywh", "xyxy")
 
-        loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
+        loss_fn = getattr(self, "loss", "giou")
+        if loss_fn == "kl":
+            loss = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                   preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+        elif loss_fn == "w2":
+            loss = compute_w2_loss(preds_box, truth_box)
+        else:
+            loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
 
         r = {
             "loss": loss,
             "scores": preds_box_convert, 
-            "targets": truth_box_convert
+            "targets": truth_box_convert,
+            "pb": preds_box,
+            "tb": truth_box
         }
 
         if getattr(self, "kl_loss", False):

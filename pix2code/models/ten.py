@@ -296,6 +296,14 @@ def build_list(n, fn) -> List[int]:
     return ivs
 
 
+def print_list(n: str, list: List[Any], pad: int = 5, ignore_idx = None):
+    padding: str = "{each:>" + str(pad) + "}"
+    if ignore_idx is None:
+        print(f"{n}: {' '.join([padding.format(each=each) for each in list])}")
+    else:
+        print(f"{n}: {' '.join([padding.format(each=each) for each in list if each != ignore_idx])}")
+
+
 def make_default(n, v):
     return v
 
@@ -334,7 +342,7 @@ class TreeEditNet(nn.Module):
 
         self.backbone = backbone
         self.backbone.eval()
-        self.generator = generator
+        self.generator = generator(max_seq_len=max_len)
 
         self.bottleneck = BottleNeck(
             vocab_size,
@@ -352,11 +360,9 @@ class TreeEditNet(nn.Module):
         self.insert_head = nn.Linear(dim, 3)
         self.update_head = nn.Linear(dim, vocab_size)
 
-        self.criterion_delete = nn.BCEWithLogitsLoss(ignore_index=-1)
+        self.criterion_delete = nn.CrossEntropyLoss(ignore_index=-1)
         self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
 
-        self.fusing = nn.Linear(dim * 2, dim)
-    
     def forward(self, batch):
         
         #
@@ -373,10 +379,10 @@ class TreeEditNet(nn.Module):
 
         #
 
-        sources_delete = predicts[:, :, :]
+        sources_delete = predicts[:, :]
         targets_delete = torch.full_like(sources_delete, -1)
 
-        sources_update = torch.full_like(sources_delete, -1)
+        sources_update = torch.zeros_like(sources_delete)
         targets_update = torch.full_like(sources_delete, -1)
 
         sources_insdel_list = []
@@ -403,7 +409,12 @@ class TreeEditNet(nn.Module):
                     node_dst.align = proxy(node_src)
 
             target_delete = build_list(tree_src, make_delete_label)
-            targets_delete[i, :len(target_delete), :] = target_delete
+            targets_delete[i, :len(target_delete)] = torch.LongTensor(target_delete)
+
+            if self.proof_of_concept:
+                print("-" * 80)
+                print_list("S-DELETE", sources_delete[i], ignore_idx=0)
+                print_list("T-DELETE", target_delete)
 
             #
 
@@ -412,10 +423,14 @@ class TreeEditNet(nn.Module):
                     node_src.delete()
 
             source_update = build_list(tree_src, make_default)
-            sources_update[i, :len(source_update), :] = source_update
+            sources_update[i, :len(source_update)] = torch.LongTensor(source_update)
 
             target_update = build_list(tree_src, make_update_label)
-            targets_update[i, :len(target_update), :] = target_update
+            targets_update[i, :len(target_update)] = torch.LongTensor(target_update)
+
+            if self.proof_of_concept:
+                print_list("S-UPDATE", source_update)
+                print_list("T-UPDATE", target_update)
 
             #
 
@@ -444,6 +459,10 @@ class TreeEditNet(nn.Module):
             sources_insdel_list.append(build_list(tree_src, make_default))
             targets_insdel_list.append(build_list(tree_src, make_delete_label))
 
+            if self.proof_of_concept:
+                print_list("S-INSDEL", sources_insdel_list[-1])
+                print_list("T-INSDEL", targets_insdel_list[-1])
+
             ##
 
             for node_src, node_dst in mapping:
@@ -454,6 +473,10 @@ class TreeEditNet(nn.Module):
 
             sources_insupd_list.append(build_list(tree_src, make_default))
             targets_insupd_list.append(build_list(tree_dst, make_default))
+
+            if self.proof_of_concept:
+                print_list("S-INSUPD", sources_insupd_list[-1])
+                print_list("T-INSUPD", targets_insupd_list[-1])
             
         #
 
@@ -465,74 +488,88 @@ class TreeEditNet(nn.Module):
         max_insupd = max(max_insupd, *[len(each) for each in sources_insupd_list])
         max_insupd = max(max_insupd, *[len(each) for each in targets_insupd_list])
 
-        sources_insdel = torch.full(targets.size(0), max_insdel, targets.size(-1), -1)
-        targets_insdel = torch.full(targets.size(0), max_insdel, targets.size(-1), -1)
-        sources_insupd = torch.full(targets.size(0), max_insupd, targets.size(-1), -1)
-        targets_insupd = torch.full(targets.size(0), max_insupd, targets.size(-1), -1)
+        sources_insdel = torch.zeros((targets.size(0), max_insdel)).long()
+        targets_insdel = torch.full_like(sources_insdel, -1)
+        sources_insupd = torch.zeros((targets.size(0), max_insupd)).long()
+        targets_insupd = torch.full_like(sources_insupd, -1)
 
         for i, each in enumerate(sources_insdel_list):
-            sources_insdel[i, :len(each), :] = each
+            sources_insdel[i, :len(each)] = torch.LongTensor(each)
 
         for i, each in enumerate(targets_insdel_list):
-            targets_insdel[i, :len(each), :] = each
+            targets_insdel[i, :len(each)] = torch.LongTensor(each)
 
         for i, each in enumerate(sources_insupd_list):
-            sources_insupd[i, :len(each), :] = each
+            sources_insupd[i, :len(each)] = torch.LongTensor(each)
 
         for i, each in enumerate(targets_insupd_list):
-            targets_insupd[i, :len(each), :] = each
+            targets_insupd[i, :len(each)] = torch.LongTensor(each)
 
         #
 
-        outputs = self.backbone(images, sources_delete)
+        r = {}
+
+        #
+
+        outputs = self.bottleneck(images, sources_delete)
         predict_delete = self.delete_head(outputs)
 
-        loss_delete = self.criterion_delete(
-            predict_delete.view(-1, predict_delete.size(-1)),
-            targets_delete.view(-1, targets_delete.size(-1))
-        )
+        predict_delete_view = predict_delete.view(-1, predict_delete.size(-1))
+        targets_delete_view = targets_delete.view(-1)
+        r["loss/delete"] = self.criterion_delete(predict_delete_view, targets_delete_view)
+
+        targets_delete_mask = (targets_delete_view != -1)
+        r["predict/delete"] = predict_delete_view[targets_delete_mask]
+        r["targets/delete"] = targets_delete_view[targets_delete_mask]
 
         #
 
-        outputs = self.backbone(images, sources_update)
+        outputs = self.bottleneck(images, sources_update)
         predict_update = self.update_head(outputs)
 
-        loss_update = self.criterion_update(
-            predict_update.view(-1, predict_update.size(-1)),
-            targets_update.view(-1, targets_update.size(-1))
-        )
+        predict_update_view = predict_update.view(-1, predict_update.size(-1))
+        targets_update_view = targets_update.view(-1)
+        r["loss/update"] = self.criterion_update(predict_update_view, targets_update_view)
+
+        targets_update_mask = (targets_update_view != -1)
+        r["predict/update"] = predict_update_view[targets_update_mask]
+        r["targets/update"] = targets_update_view[targets_update_mask]
 
         #
 
-        outputs = self.backbone(images, sources_insdel)
+        outputs = self.bottleneck(images, sources_insdel)
         predict_insdel = self.delete_head(outputs)
 
-        loss_insdel = self.criterion_delete(
-            predict_insdel.view(-1, predict_insdel.size(-1)),
-            targets_insdel.view(-1, targets_insdel.size(-1))
-        )
+        predict_insdel_view = predict_insdel.view(-1, predict_insdel.size(-1))
+        targets_insdel_view = targets_insdel.view(-1)
+        r["loss/insdel"] = self.criterion_delete(predict_insdel_view, targets_insdel_view)
+
+        targets_insdel_mask = (targets_insdel_view != -1)
+        r["predict/insdel"] = predict_insdel_view[targets_insdel_mask]
+        r["targets/insdel"] = targets_insdel_view[targets_insdel_mask]
         
         #
 
-        outputs = self.backbone(images, sources_insupd)
+        outputs = self.bottleneck(images, sources_insupd)
         predict_insupd = self.update_head(outputs)
 
-        loss_insupd = self.criterion_update(
+        r["loss/insupd"] = self.criterion_update(
             predict_insupd.view(-1, predict_insupd.size(-1)),
-            targets_insupd.view(-1, targets_insupd.size(-1))
+            targets_insupd.view(-1)
         )
+
+        predict_insupd_view = predict_insupd.view(-1, predict_insupd.size(-1))
+        targets_insupd_view = targets_insupd.view(-1)
+        r["loss/insupd"] = self.criterion_delete(predict_insupd_view, targets_insupd_view)
+
+        targets_insupd_mask = (targets_insupd_view != -1)
+        r["predict/insupd"] = predict_insupd_view[targets_insupd_mask]
+        r["targets/insupd"] = targets_insupd_view[targets_insupd_mask]
 
         #
 
-        loss = loss_delete + loss_update + loss_insdel + loss_insupd
-
-        return {
-            "loss": loss,
-            "loss/delete": loss_delete,
-            "loss/update": loss_update,
-            "loss/insdel": loss_insdel,
-            "loss/insupd": loss_insupd
-        }
+        r["loss"] = r["loss/delete"] + r["loss/update"] + r["loss/insdel"] + r["loss/insupd"]
+        return r
     
     def encode(self, img):
         return self.img_encoder(img)

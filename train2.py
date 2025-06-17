@@ -1,30 +1,57 @@
 from typing import *
 
-import argparse
-from urllib.parse import urlparse, parse_qs
 from functools import partial
 
-import json
 import numpy as np
 
 from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 
-import torchvision
-
 from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
 
 from pix2code.utils import seed_everything
+from pix2code.utils.config import get_args_parser, check_model, parse_model
 from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import get_model_class_by_name
-from pix2code.tunings import get_ft_model_class_by_name
 from pix2code.generators import GreedySearch, BeamSearch
 
-from .train import get_args_parser, check_model, build_model
+
+def build_model(args, data_set):
+    model_name, model_params = parse_model(args.model)
+    assert model_name is not None
+
+    model_class = get_model_class_by_name(model_name)
+    assert model_class is not None
+
+    if args.proof_of_concept:
+        model_params["proof_of_concept"] = True
+
+    model_backbone = args.backbone
+    assert model_backbone is not None
+    t = Trainer.load_checkpoint(model_backbone)
+    model_params["backbone"] = t.get_inner_model()
+    
+    model_params["vocab_size"] = 90
+    model_params["max_len"] = data_set.max_len
+
+    if "generator" in model_params:
+        if model_params["generator"].startswith("beam"):
+            model_params["generator"] = partial(
+                BeamSearch, 
+                vocab_size=model_params["vocab_size"], 
+                beam_width=int(model_params["generator"][-1]))
+        else:
+            emb_weight = np.load(args.extra) if args.extra is not None else None
+            model_params["generator"] = partial(
+                GreedySearch, 
+                vocab_size=model_params["vocab_size"], 
+                conditions=emb_weight)
+
+    return model_class(**model_params)
 
 
 def main(args):
@@ -49,12 +76,6 @@ def main(args):
     else:
         split_train, split_valid, split_test = None, None, None
 
-    if args.code_lt_path is not None:
-        with open(args.code_lt_path, "r") as input:
-            code_lt = json.load(input)
-    else:
-        code_lt = None
-
     has_comma = (not args.no_comma)
     
     if not args.test_only:
@@ -62,7 +83,6 @@ def main(args):
                                     args.code_path, 
                                     split_train, 
                                     transform=PresetEval(),
-                                    label_trans=code_lt, 
                                     multi_label=args.multi_label, 
                                     label_aug_prob=args.label_aug_prob,
                                     has_comma=has_comma, 
@@ -86,7 +106,6 @@ def main(args):
                                         args.code_path, 
                                         split_valid, 
                                         transform=PresetEval(),
-                                        label_trans=code_lt, 
                                         multi_label=args.multi_label,
                                         has_comma=has_comma, 
                                         has_rect=has_rect, 
@@ -190,7 +209,6 @@ def main(args):
                                     args.test_path, 
                                     split_test, 
                                     transform=PresetEval(),
-                                    label_trans=code_lt, 
                                     multi_label=args.multi_label,
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
