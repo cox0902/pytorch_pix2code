@@ -689,3 +689,4 @@ class AdvMetrics:
                 #     str_inline += f' ({metric["meter"].avg:.5f})'
                 agg_metrics.extend(metric.format())
         return '\t'.join(agg_metrics)
+    

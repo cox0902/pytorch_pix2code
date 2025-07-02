@@ -8,12 +8,12 @@ from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 
-from torcheval.metrics import MulticlassAccuracy, MulticlassAUROC
+from torcheval.metrics import BinaryAccuracy, BinaryAUROC, MulticlassAccuracy, MulticlassAUROC
 
 from pix2code.utils import seed_everything
 from pix2code.utils.config import get_args_parser, check_model, parse_model
 from pix2code.trainer import Trainer
-from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics
+from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer
 from pix2code.dataset import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import get_model_class_by_name
@@ -52,6 +52,23 @@ def build_model(args, data_set):
                 conditions=emb_weight)
 
     return model_class(**model_params)
+
+
+def create_metrics():
+    metrics = AdvMetrics(reduction="sum")
+    # metrics.add_metric_obj(SimpleMetricScorer("delete/acc", BinaryAccuracy(), "predict/delete", "targets/delete"))
+    # metrics.add_metric_obj(SimpleMetricScorer("delete/auc", BinaryAUROC(), "predict/delete", "targets/delete"))
+    metrics.add_metric_obj(SimpleMetricScorer("delete/acc", MulticlassAccuracy(num_classes=2), "predict/delete", "targets/delete"))
+    metrics.add_metric_obj(SimpleMetricScorer("delete/auc", MulticlassAUROC(num_classes=2), "predict/delete", "targets/delete"))
+    metrics.add_metric_obj(SimpleMetricScorer("update/acc", MulticlassAccuracy(num_classes=90), "predict/update", "targets/update"))
+    metrics.add_metric_obj(SimpleMetricScorer("update/auc", MulticlassAUROC(num_classes=90), "predict/update", "targets/update"))
+    # metrics.add_metric_obj(SimpleMetricScorer("insdel/acc", BinaryAccuracy(), "predict/insdel", "targets/insdel"))
+    # metrics.add_metric_obj(SimpleMetricScorer("insdel/auc", BinaryAUROC(), "predict/insdel", "targets/insdel"))
+    metrics.add_metric_obj(SimpleMetricScorer("insdel/acc", MulticlassAccuracy(num_classes=2), "predict/insdel", "targets/insdel"))
+    metrics.add_metric_obj(SimpleMetricScorer("insdel/auc", MulticlassAUROC(num_classes=2), "predict/insdel", "targets/insdel"))
+    metrics.add_metric_obj(SimpleMetricScorer("insupd/acc", MulticlassAccuracy(num_classes=90), "predict/insupd", "targets/insupd"))
+    metrics.add_metric_obj(SimpleMetricScorer("insupd/auc", MulticlassAUROC(num_classes=90), "predict/insupd", "targets/insupd"))
+    return metrics
 
 
 def main(args):
@@ -174,26 +191,29 @@ def main(args):
                         valid_loader=valid_loader)
         return
     
-    if args.metric == "acc":
-        metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)
-    elif args.metric == "auc":
-        metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAUROC)
-    # elif args.metric == "acc+":
-    #     metrics = MulticlassMetrics(90, scorer=MulticlassAccuracy)
-    # elif args.metric == "auc+":
-    #     metrics = MulticlassMetrics(90, scorer=MulticlassAUROC)
-    elif args.metric == "loss":
-        metrics = SimpleLossMetrics()
-    else:
-        assert False
+    # if args.metric == "acc":
+    #     metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAccuracy)
+    # elif args.metric == "auc":
+    #     metrics = SimpleMulticlassMetrics(90, scorer=MulticlassAUROC)
+    # # elif args.metric == "acc+":
+    # #     metrics = MulticlassMetrics(90, scorer=MulticlassAccuracy)
+    # # elif args.metric == "auc+":
+    # #     metrics = MulticlassMetrics(90, scorer=MulticlassAUROC)
+    # elif args.metric == "loss":
+    #     metrics = SimpleLossMetrics()
+    # else:
+    #     assert False
 
-    if args.eval_metric is None:
-        eval_metrics = metrics
-    else:
-        eval_metrics = AdvMetrics(reduction=args.stop_metric)
-        ems = args.eval_metric.split("+")
-        for each in ems:
-            eval_metrics.add_metric(each)
+    # if args.eval_metric is None:
+    #     eval_metrics = metrics
+    # else:
+    #     eval_metrics = AdvMetrics(reduction=args.stop_metric)
+    #     ems = args.eval_metric.split("+")
+    #     for each in ems:
+    #         eval_metrics.add_metric(each)
+
+    metrics = SimpleLossMetrics()
+    eval_metrics = create_metrics()
 
     if not args.test_only:
         trainer.fit(epochs=args.epochs, 

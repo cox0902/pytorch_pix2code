@@ -308,6 +308,10 @@ def make_default(n, v):
     return v
 
 
+def make_default_label(n, v):
+    return v if n else -1
+
+
 def make_delete_label(n, v):
     if n:
         return 0 if n.align else 1
@@ -315,7 +319,10 @@ def make_delete_label(n, v):
 
 
 def make_update_label(n, v):
-    return n.align.iv if n else v
+    return n.align.iv if n else -1
+
+
+MAX_SEQ_LEN = 450
 
 
 class TreeEditNet(nn.Module):
@@ -335,10 +342,12 @@ class TreeEditNet(nn.Module):
                  mlp_dim=1024, 
                  dropout=0.1, 
                  emb_dropout=0.1,
+                 verbose = None,
                  proof_of_concept: bool = False):
         
         super().__init__()
         self.proof_of_concept = proof_of_concept
+        self.verbose = (verbose == "1")
 
         self.backbone = backbone
         self.backbone.eval()
@@ -374,12 +383,13 @@ class TreeEditNet(nn.Module):
         #
 
         images = batch["image"]
-        targets = batch["code"].long()
+        targets = batch["code"].long()  # (B, S)
         # targets_lens = batch["code_len"]
+        batch_size = targets.size(0)
 
         #
 
-        sources_delete = predicts[:, :]
+        sources_delete = torch.zeros((batch_size, MAX_SEQ_LEN), dtype=torch.long)
         targets_delete = torch.full_like(sources_delete, -1)
 
         sources_update = torch.zeros_like(sources_delete)
@@ -408,10 +418,16 @@ class TreeEditNet(nn.Module):
                     node_src.align = proxy(node_dst)
                     node_dst.align = proxy(node_src)
 
+            source_delete = build_list(tree_src, make_default)
             target_delete = build_list(tree_src, make_delete_label)
+            # if len(target_delete) > 307:
+            #     print_list(f"{len(src)}", tree_src.build_list())
+            #     print_list(f"{len(dst)}", tree_dst.build_list())
+
+            sources_delete[i, :len(source_delete)] = torch.LongTensor(source_delete)
             targets_delete[i, :len(target_delete)] = torch.LongTensor(target_delete)
 
-            if self.proof_of_concept:
+            if self.proof_of_concept and self.verbose:
                 print("-" * 80)
                 print_list("S-DELETE", sources_delete[i], ignore_idx=0)
                 print_list("T-DELETE", target_delete)
@@ -423,12 +439,12 @@ class TreeEditNet(nn.Module):
                     node_src.delete()
 
             source_update = build_list(tree_src, make_default)
-            sources_update[i, :len(source_update)] = torch.LongTensor(source_update)
-
             target_update = build_list(tree_src, make_update_label)
+            
+            sources_update[i, :len(source_update)] = torch.LongTensor(source_update)
             targets_update[i, :len(target_update)] = torch.LongTensor(target_update)
 
-            if self.proof_of_concept:
+            if self.proof_of_concept and self.verbose:
                 print_list("S-UPDATE", source_update)
                 print_list("T-UPDATE", target_update)
 
@@ -459,7 +475,7 @@ class TreeEditNet(nn.Module):
             sources_insdel_list.append(build_list(tree_src, make_default))
             targets_insdel_list.append(build_list(tree_src, make_delete_label))
 
-            if self.proof_of_concept:
+            if self.proof_of_concept and self.verbose:
                 print_list("S-INSDEL", sources_insdel_list[-1])
                 print_list("T-INSDEL", targets_insdel_list[-1])
 
@@ -472,9 +488,9 @@ class TreeEditNet(nn.Module):
                     node_dst.delete()
 
             sources_insupd_list.append(build_list(tree_src, make_default))
-            targets_insupd_list.append(build_list(tree_dst, make_default))
+            targets_insupd_list.append(build_list(tree_dst, make_default_label))
 
-            if self.proof_of_concept:
+            if self.proof_of_concept and self.verbose:
                 print_list("S-INSUPD", sources_insupd_list[-1])
                 print_list("T-INSUPD", targets_insupd_list[-1])
             
