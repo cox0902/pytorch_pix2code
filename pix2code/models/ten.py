@@ -376,16 +376,17 @@ class TreeEditNet(nn.Module):
         
         #
 
-        with torch.no_grad():
-            predicts, _, _ = self.generator.search(self.backbone, batch)
-            predicts = predicts.detach().cpu()
-
-        #
-
         images = batch["image"]
         targets = batch["code"].long()  # (B, S)
         # targets_lens = batch["code_len"]
         batch_size = targets.size(0)
+
+        #
+
+        self.backbone.to(images.device)
+        with torch.no_grad():
+            predicts, _, _ = self.generator.search(self.backbone, batch)
+            predicts = predicts.detach().cpu()
 
         #
 
