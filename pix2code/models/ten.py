@@ -523,6 +523,17 @@ class TreeEditNet(nn.Module):
 
         #
 
+        sources_delete.to(images.device)
+        targets_delete.to(images.device)
+        sources_update.to(images.device)
+        targets_update.to(images.device)
+        sources_insdel.to(images.device)
+        targets_insdel.to(images.device)
+        sources_insupd.to(images.device)
+        targets_insupd.to(images.device)
+
+        #
+
         r = {}
 
         #
