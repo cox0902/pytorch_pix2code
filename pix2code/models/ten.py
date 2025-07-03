@@ -383,7 +383,7 @@ class TreeEditNet(nn.Module):
 
         #
 
-        self.backbone.to(images.device)
+        # self.backbone.to(images.device)
         with torch.no_grad():
             predicts, _, _ = self.generator.search(self.backbone, batch)
             predicts = predicts.detach().cpu()
@@ -524,14 +524,15 @@ class TreeEditNet(nn.Module):
 
         #
 
-        sources_delete.to(images.device)
-        targets_delete.to(images.device)
-        sources_update.to(images.device)
-        targets_update.to(images.device)
-        sources_insdel.to(images.device)
-        targets_insdel.to(images.device)
-        sources_insupd.to(images.device)
-        targets_insupd.to(images.device)
+        sources_delete = sources_delete.to(images.device)
+        targets_delete = targets_delete.to(images.device)
+        sources_update = sources_update.to(images.device)
+        targets_update = targets_update.to(images.device)
+
+        sources_insdel = sources_insdel.to(images.device)
+        targets_insdel = targets_insdel.to(images.device)
+        sources_insupd = sources_insupd.to(images.device)
+        targets_insupd = targets_insupd.to(images.device)
 
         #
 
