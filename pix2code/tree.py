@@ -207,10 +207,14 @@ class TreeNode:
    
     @staticmethod
     def build_tree(code, 
+                   mask: Optional[List] = None,
+                   init: Optional[Any] = None,
                    device: Optional[torch.device] = None,
                    verbose: bool = False) -> "TreeNode":
         
         root = TreeNode(3, device)
+        if mask is not None:
+            root.mask = init
         node = root
         queue: List[TreeNode] = [node]
         for ii, iv in enumerate(code):
@@ -234,4 +238,6 @@ class TreeNode:
                     print("warning: unclosed [RB]")
                 break
             node = queue[-1].add_child(iv)
+            if mask is not None:
+                node.mask = mask[ii]
         return root

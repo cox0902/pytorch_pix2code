@@ -255,6 +255,15 @@ class BottleNeck(nn.Module):
         cap_emb = self.positional_encoding(self.tok_emb(inputs))
         outs = self.decoder(cap_emb, memory, tgt_key_padding_mask = cap_padding_mask)
         return outs
+    
+    def encode(self, images):
+        return self.img_encoder(images)
+    
+    def decode(self, memory, inputs):
+        _, cap_padding_mask = create_mask(inputs)
+        cap_emb = self.positional_encoding(self.tok_emb(inputs))
+        outs = self.decoder(cap_emb, memory, tgt_key_padding_mask = cap_padding_mask)
+        return outs
 
 
 class CustomConfig(Config):
@@ -342,12 +351,21 @@ class TreeEditNet(nn.Module):
                  mlp_dim=1024, 
                  dropout=0.1, 
                  emb_dropout=0.1,
+
+                 mask_rate = None,
+
                  verbose = None,
                  proof_of_concept: bool = False):
         
         super().__init__()
         self.proof_of_concept = proof_of_concept
         self.verbose = (verbose == "1")
+
+        self.mask_rate = (float(mask_rate) if mask_rate is not None else 0.0)
+
+        print({
+            "mask_rate": self.mask_rate,
+        })
 
         self.backbone = backbone
         self.backbone.eval()
@@ -366,14 +384,20 @@ class TreeEditNet(nn.Module):
         )
 
         self.delete_head = nn.Linear(dim, 2)
-        self.insert_head = nn.Linear(dim, 3)
+        # self.insert_head = nn.Linear(dim, 3)
         self.update_head = nn.Linear(dim, vocab_size)
 
         self.criterion_delete = nn.CrossEntropyLoss(ignore_index=-1)
         self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
 
     def forward(self, batch):
+        if self.training:
+            return self.forward_training(batch)
+        else:
+            return self.forward_inference(batch)
         
+    def forward_training(self, batch):
+
         #
 
         images = batch["image"]
@@ -452,6 +476,12 @@ class TreeEditNet(nn.Module):
             #
 
             descendents = tree_src.ravel()
+
+            if getattr(self, "mask_rate", 0) > 0:
+                masked_nodes = np.random.choice(descendents, size=int(self.mask_rate * len(descendents)), replace=False)
+                for each_node in masked_nodes:
+                    each_node.iv = 5
+
             for _ in range(len(descendents) // 2):
                 n: TreeNode = np.random.choice(descendents)
                 insert_i, insert_j = 0, 0
@@ -600,29 +630,37 @@ class TreeEditNet(nn.Module):
         r["loss"] = r["loss/delete"] + r["loss/update"] + r["loss/insdel"] + r["loss/insupd"]
         return r
     
-    def encode(self, img):
-        return self.img_encoder(img)
+    def forward_inference(self, batch):
 
-    def decode(self, caption, memory, cap_mask):
-        return self.decoder(self.positional_encoding(self.tok_emb(caption)), memory,
-                            tgt_mask = cap_mask)
+        #
+
+        images = batch["image"]
+        targets = batch["code"].long()  # (B, S)
+        # targets_lens = batch["code_len"]
+        batch_size = targets.size(0)
+
+        #
+
+        # self.backbone.to(images.device)
+        with torch.no_grad():
+            predicts, _, _ = self.generator.search(self.backbone, batch)
+            predicts = predicts.detach().cpu()
+
+        for i, (src, dst) in enumerate(zip(predicts, targets)):
+        
+            tree_src = TreeNode.build_tree(src)
+            source_delete = build_list(tree_src, make_default)
+            sources_delete = torch.zeros((1, MAX_SEQ_LEN), dtype=torch.long)
+            sources_delete[0, :len(source_delete)] = torch.LongTensor(source_delete)
+
+            with torch.no_grad():
+                outputs = self.bottleneck(images, sources_delete)
+                predict_delete = self.delete_head(outputs)
+            
+            tree_del = TreeNode.build_tree(sources_delete[0], predict_delete[0])
+
+        return {}
     
-    def predict_init(self, images):
-        memory = self.encoder(images)
-        return {
-            "memory": memory
-        }
-
-    def predict_next(self, inputs, context):
-
-        fusing_memory = self.fusing(torch.cat([memory, code_embs], dim=-1))
-
-        cap_emb = self.positional_encoding(self.tok_emb(inputs))
-        outs = self.decoder(cap_emb, fusing_memory)
-        scores = self.generator(outs[:, -1, :])  # (batch, seq_length, num_classes)
-        predicts = torch.argmax(torch.softmax(scores, dim=-1), dim=-1)
-        return predicts, scores, {}
-
 
 # def generate_square_subsequent_mask(sz, device='cpu'):
 #     mask = (torch.triu(torch.ones((sz, sz), device=device)) == 1).transpose(0, 1)
