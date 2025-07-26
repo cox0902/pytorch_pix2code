@@ -391,10 +391,10 @@ class TreeEditNet(nn.Module):
         self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
 
     def forward(self, batch):
-        if self.training:
-            return self.forward_training(batch)
-        else:
-            return self.forward_inference(batch)
+        # if self.training:
+        return self.forward_training(batch)
+        # else:
+        #     return self.forward_inference(batch)
         
     def forward_training(self, batch):
 
