@@ -14,7 +14,7 @@ from pix2code.utils import seed_everything
 from pix2code.utils.config import get_args_parser, check_model, parse_model
 from pix2code.trainer import Trainer
 from pix2code.metrics import SimpleMulticlassMetrics, SimpleLossMetrics, AdvMetrics, SimpleMetricScorer
-from pix2code.dataset import ImageCodeDataset
+from pix2code.dataset2 import ImageCodeDataset
 from pix2code.transforms import PresetEval
 from pix2code.models import get_model_class_by_name
 from pix2code.generators import GreedySearch, BeamSearch
@@ -31,9 +31,9 @@ def build_model(args, data_set):
         model_params["proof_of_concept"] = True
 
     model_backbone = args.backbone
-    assert model_backbone is not None
-    t = Trainer.load_checkpoint(model_backbone)
-    model_params["backbone"] = t.get_inner_model()
+    if model_backbone is not None:
+        t = Trainer.load_checkpoint(model_backbone)
+        model_params["backbone"] = t.get_inner_model()
     
     model_params["vocab_size"] = 90
     model_params["max_len"] = data_set.max_len
@@ -100,6 +100,7 @@ def main(args):
                                     args.code_path, 
                                     split_train, 
                                     transform=PresetEval(),
+                                    pred_path=args.pred_path,
                                     multi_label=args.multi_label, 
                                     label_aug_prob=args.label_aug_prob,
                                     has_comma=has_comma, 
@@ -123,6 +124,7 @@ def main(args):
                                         args.code_path, 
                                         split_valid, 
                                         transform=PresetEval(),
+                                        pred_path=args.pred_path,
                                         multi_label=args.multi_label,
                                         has_comma=has_comma, 
                                         has_rect=has_rect, 
@@ -229,6 +231,7 @@ def main(args):
                                     args.test_path, 
                                     split_test, 
                                     transform=PresetEval(),
+                                    pred_path=args.pred_path,
                                     multi_label=args.multi_label,
                                     has_comma=has_comma, 
                                     has_rect=has_rect, 
@@ -253,6 +256,7 @@ def main(args):
 if __name__ == "__main__":
     parser = get_args_parser()
     parser.add_argument("--backbone", type=str)
+    parser.add_argument("--pred-path", type=str)
 
     args = parser.parse_args()
     main(args)

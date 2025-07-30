@@ -340,8 +340,8 @@ class TreeEditNet(nn.Module):
                  vocab_size,
                  max_len,
 
-                 backbone, 
-                 generator,
+                 backbone=None, 
+                 generator=None,
                  
                  image_size=256, 
                  patch_size=16, 
@@ -368,8 +368,9 @@ class TreeEditNet(nn.Module):
         })
 
         self.backbone = backbone
-        self.backbone.eval()
-        self.generator = generator(max_seq_len=max_len)
+        if backbone is not None:
+            self.backbone.eval()
+            self.generator = generator(max_seq_len=max_len)
 
         self.bottleneck = BottleNeck(
             vocab_size,
@@ -408,9 +409,12 @@ class TreeEditNet(nn.Module):
         #
 
         # self.backbone.to(images.device)
-        with torch.no_grad():
-            predicts, _, _ = self.generator.search(self.backbone, batch)
-            predicts = predicts.detach().cpu()
+        if self.backbone is not None:
+            with torch.no_grad():
+                predicts, _, _ = self.generator.search(self.backbone, batch)
+                predicts = predicts.detach().cpu()
+        else:
+            predicts = batch["pred"]
 
         #
 
