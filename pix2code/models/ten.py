@@ -365,6 +365,7 @@ class TreeEditNet(nn.Module):
 
         print({
             "mask_rate": self.mask_rate,
+            "verbose": self.verbose
         })
 
         self.backbone = backbone
@@ -482,9 +483,8 @@ class TreeEditNet(nn.Module):
             descendents = tree_src.ravel()
 
             if getattr(self, "mask_rate", 0) > 0:
-                masked_nodes = np.random.choice(descendents[1:], 
-                                                size=int(self.mask_rate * (len(descendents) - 1)), 
-                                                replace=False)
+                total_masked = int(self.mask_rate * (len(descendents) - 1))
+                masked_nodes = np.random.choice(descendents[1:], size=total_masked, replace=False)
                 for each_node in masked_nodes:
                     each_node.iv = 5
 
@@ -574,9 +574,13 @@ class TreeEditNet(nn.Module):
 
         r = {}
 
+        # 
+
+        memory = self.bottleneck.encode(images)
+
         #
 
-        outputs = self.bottleneck(images, sources_delete)
+        outputs = self.bottleneck.decode(memory, sources_delete)
         predict_delete = self.delete_head(outputs)
 
         predict_delete_view = predict_delete.view(-1, predict_delete.size(-1))
@@ -584,12 +588,12 @@ class TreeEditNet(nn.Module):
         r["loss/delete"] = self.criterion_delete(predict_delete_view, targets_delete_view)
 
         targets_delete_mask = (targets_delete_view != -1)
-        r["predict/delete"] = predict_delete_view[targets_delete_mask]
-        r["targets/delete"] = targets_delete_view[targets_delete_mask]
+        r["predict/delete"] = predict_delete_view[targets_delete_mask].detach()
+        r["targets/delete"] = targets_delete_view[targets_delete_mask].detach()
 
         #
 
-        outputs = self.bottleneck(images, sources_update)
+        outputs = self.bottleneck.decode(memory, sources_update)
         predict_update = self.update_head(outputs)
 
         predict_update_view = predict_update.view(-1, predict_update.size(-1))
@@ -597,12 +601,12 @@ class TreeEditNet(nn.Module):
         r["loss/update"] = self.criterion_update(predict_update_view, targets_update_view)
 
         targets_update_mask = (targets_update_view != -1)
-        r["predict/update"] = predict_update_view[targets_update_mask]
-        r["targets/update"] = targets_update_view[targets_update_mask]
+        r["predict/update"] = predict_update_view[targets_update_mask].detach()
+        r["targets/update"] = targets_update_view[targets_update_mask].detach()
 
         #
 
-        outputs = self.bottleneck(images, sources_insdel)
+        outputs = self.bottleneck.decode(memory, sources_insdel)
         predict_insdel = self.delete_head(outputs)
 
         predict_insdel_view = predict_insdel.view(-1, predict_insdel.size(-1))
@@ -610,12 +614,12 @@ class TreeEditNet(nn.Module):
         r["loss/insdel"] = self.criterion_delete(predict_insdel_view, targets_insdel_view)
 
         targets_insdel_mask = (targets_insdel_view != -1)
-        r["predict/insdel"] = predict_insdel_view[targets_insdel_mask]
-        r["targets/insdel"] = targets_insdel_view[targets_insdel_mask]
+        r["predict/insdel"] = predict_insdel_view[targets_insdel_mask].detach()
+        r["targets/insdel"] = targets_insdel_view[targets_insdel_mask].detach()
         
         #
 
-        outputs = self.bottleneck(images, sources_insupd)
+        outputs = self.bottleneck.decode(memory, sources_insupd)
         predict_insupd = self.update_head(outputs)
 
         predict_insupd_view = predict_insupd.view(-1, predict_insupd.size(-1))
