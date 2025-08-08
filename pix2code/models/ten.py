@@ -618,14 +618,9 @@ class TreeEditNet(nn.Module):
         outputs = self.bottleneck(images, sources_insupd)
         predict_insupd = self.update_head(outputs)
 
-        r["loss/insupd"] = self.criterion_update(
-            predict_insupd.view(-1, predict_insupd.size(-1)),
-            targets_insupd.view(-1)
-        )
-
         predict_insupd_view = predict_insupd.view(-1, predict_insupd.size(-1))
         targets_insupd_view = targets_insupd.view(-1)
-        r["loss/insupd"] = self.criterion_delete(predict_insupd_view, targets_insupd_view)
+        r["loss/insupd"] = self.criterion_update(predict_insupd_view, targets_insupd_view)
 
         targets_insupd_mask = (targets_insupd_view != -1)
         r["predict/insupd"] = predict_insupd_view[targets_insupd_mask]
