@@ -353,6 +353,7 @@ class TreeEditNet(nn.Module):
                  emb_dropout=0.1,
 
                  mask_rate = None,
+                 min_insert = None,
 
                  verbose = None,
                  proof_of_concept: bool = False):
@@ -362,9 +363,11 @@ class TreeEditNet(nn.Module):
         self.verbose = (verbose == "1")
 
         self.mask_rate = (float(mask_rate) if mask_rate is not None else 0.0)
+        self.min_insert = (int(min_insert) if min_insert is not None else 0)
 
         print({
             "mask_rate": self.mask_rate,
+            "min_insert": self.min_insert,
             "verbose": self.verbose
         })
 
@@ -407,6 +410,8 @@ class TreeEditNet(nn.Module):
         # targets_lens = batch["code_len"]
         batch_size = targets.size(0)
 
+
+
         #
 
         # self.backbone.to(images.device)
@@ -431,6 +436,11 @@ class TreeEditNet(nn.Module):
         targets_insupd_list = []
 
         for i, (src, dst) in enumerate(zip(predicts, targets)):
+
+            if self.proof_of_concept and self.verbose:
+                print("-" * 80)
+                print_list("--SOURCE", src, ignore_idx=0)
+                print_list("--TARGET", dst, ignore_idx=0)
 
             tree_src = TreeNode.build_tree(src)
             tree_dst = TreeNode.build_tree(dst)
@@ -458,7 +468,6 @@ class TreeEditNet(nn.Module):
             targets_delete[i, :len(target_delete)] = torch.LongTensor(target_delete)
 
             if self.proof_of_concept and self.verbose:
-                print("-" * 80)
                 print_list("S-DELETE", sources_delete[i], ignore_idx=0)
                 print_list("T-DELETE", target_delete)
 
@@ -488,7 +497,11 @@ class TreeEditNet(nn.Module):
                 for each_node in masked_nodes:
                     each_node.iv = 5
 
-            for _ in range(len(descendents) // 2):
+            insert_count = len(descendents) // 2
+            if getattr(self, "min_insert", 0) > 0:
+                insert_count = max(self.min_insert, insert_count)
+
+            for _ in range(insert_count):
                 n: TreeNode = np.random.choice(descendents)
                 insert_i, insert_j = 0, 0
                 if len(n.children) > 0:
