@@ -54,14 +54,15 @@ def build_model(args, data_set):
     return model_class(**model_params)
 
 
-def create_metrics():
+def create_metrics(is_half_train):
     metrics = AdvMetrics(reduction="sum")
     # metrics.add_metric_obj(SimpleMetricScorer("delete/acc", BinaryAccuracy(), "predict/delete", "targets/delete"))
     # metrics.add_metric_obj(SimpleMetricScorer("delete/auc", BinaryAUROC(), "predict/delete", "targets/delete"))
-    metrics.add_metric_obj(SimpleMetricScorer("delete/acc", MulticlassAccuracy(num_classes=2), "predict/delete", "targets/delete"))
-    metrics.add_metric_obj(SimpleMetricScorer("delete/auc", MulticlassAUROC(num_classes=2), "predict/delete", "targets/delete"))
-    metrics.add_metric_obj(SimpleMetricScorer("update/acc", MulticlassAccuracy(num_classes=90), "predict/update", "targets/update"))
-    metrics.add_metric_obj(SimpleMetricScorer("update/auc", MulticlassAUROC(num_classes=90), "predict/update", "targets/update"))
+    if not is_half_train:
+        metrics.add_metric_obj(SimpleMetricScorer("delete/acc", MulticlassAccuracy(num_classes=2), "predict/delete", "targets/delete"))
+        metrics.add_metric_obj(SimpleMetricScorer("delete/auc", MulticlassAUROC(num_classes=2), "predict/delete", "targets/delete"))
+        metrics.add_metric_obj(SimpleMetricScorer("update/acc", MulticlassAccuracy(num_classes=90), "predict/update", "targets/update"))
+        metrics.add_metric_obj(SimpleMetricScorer("update/auc", MulticlassAUROC(num_classes=90), "predict/update", "targets/update"))
     # metrics.add_metric_obj(SimpleMetricScorer("insdel/acc", BinaryAccuracy(), "predict/insdel", "targets/insdel"))
     # metrics.add_metric_obj(SimpleMetricScorer("insdel/auc", BinaryAUROC(), "predict/insdel", "targets/insdel"))
     metrics.add_metric_obj(SimpleMetricScorer("insdel/acc", MulticlassAccuracy(num_classes=2), "predict/insdel", "targets/insdel"))
@@ -215,7 +216,7 @@ def main(args):
     #         eval_metrics.add_metric(each)
 
     metrics = SimpleLossMetrics()
-    eval_metrics = create_metrics()
+    eval_metrics = create_metrics(model.half_train)
 
     if not args.test_only:
         trainer.fit(epochs=args.epochs, 
