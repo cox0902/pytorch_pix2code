@@ -503,9 +503,9 @@ class TreeEditNet(nn.Module):
                 masked_nodes = np.random.choice(descendents[1:], size=total_masked, replace=False)
                 for each_node in masked_nodes:
                     if getattr(self, "mask_fill", False):
-                        each_node.iv = 2
+                        each_node.iv = np.random.randint(8, 90)
                     else:
-                        each_node.iv = np.random.randint(8, 90 + 1)
+                        each_node.iv = 2
 
             insert_count = len(descendents) // 2
             if getattr(self, "min_insert", 0) > 0:
@@ -518,9 +518,9 @@ class TreeEditNet(nn.Module):
                     insert_i = np.random.randint(0, len(n.children) + 1)
                     insert_j = np.random.randint(0, len(n.children) + 1)
                 if getattr(self, "mask_fill", False):
-                    n.insert(2, i=insert_i, j=insert_j)
+                    n.insert(np.random.randint(8, 90), i=insert_i, j=insert_j)
                 else:
-                    n.insert(np.random.randint(8, 90 + 1), i=insert_i, j=insert_j)
+                    n.insert(2, i=insert_i, j=insert_j)
 
             _, mapping = compute_ted(tree_src, tree_dst)
 
