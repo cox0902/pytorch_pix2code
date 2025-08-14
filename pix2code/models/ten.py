@@ -355,6 +355,7 @@ class TreeEditNet(nn.Module):
                  mask_rate = None,
                  min_insert = None,
                  half_train = None,
+                 mask_fill = None,
 
                  verbose = None,
                  proof_of_concept: bool = False):
@@ -366,11 +367,13 @@ class TreeEditNet(nn.Module):
         self.mask_rate = (float(mask_rate) if mask_rate is not None else 0.0)
         self.min_insert = (int(min_insert) if min_insert is not None else 0)
         self.half_train = (half_train == "1")
+        self.mask_fill = (mask_fill == "1")
 
         print({
             "mask_rate": self.mask_rate,
             "min_insert": self.min_insert,
             "half_train": self.half_train,
+            "mask_fill": self.mask_fill,
             "verbose": self.verbose
         })
 
@@ -499,7 +502,10 @@ class TreeEditNet(nn.Module):
                 total_masked = int(self.mask_rate * (len(descendents) - 1))
                 masked_nodes = np.random.choice(descendents[1:], size=total_masked, replace=False)
                 for each_node in masked_nodes:
-                    each_node.iv = 5
+                    if getattr(self, "mask_fill", False):
+                        each_node.iv = 2
+                    else:
+                        each_node.iv = np.random.randint(8, 90 + 1)
 
             insert_count = len(descendents) // 2
             if getattr(self, "min_insert", 0) > 0:
@@ -511,7 +517,10 @@ class TreeEditNet(nn.Module):
                 if len(n.children) > 0:
                     insert_i = np.random.randint(0, len(n.children) + 1)
                     insert_j = np.random.randint(0, len(n.children) + 1)
-                n.insert(2, i=insert_i, j=insert_j)
+                if getattr(self, "mask_fill", False):
+                    n.insert(2, i=insert_i, j=insert_j)
+                else:
+                    n.insert(np.random.randint(8, 90 + 1), i=insert_i, j=insert_j)
 
             _, mapping = compute_ted(tree_src, tree_dst)
 
