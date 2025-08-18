@@ -356,6 +356,7 @@ class TreeEditNet(nn.Module):
                  min_insert = None,
                  half_train = None,
                  mask_fill = None,
+                 x2 = None,
 
                  verbose = None,
                  proof_of_concept: bool = False):
@@ -368,12 +369,14 @@ class TreeEditNet(nn.Module):
         self.min_insert = (int(min_insert) if min_insert is not None else 0)
         self.half_train = (half_train == "1")
         self.mask_fill = (mask_fill == "1")
+        self.x2 = (x2 == "1")
 
         print({
             "mask_rate": self.mask_rate,
             "min_insert": self.min_insert,
             "half_train": self.half_train,
             "mask_fill": self.mask_fill,
+            "x2": self.x2,
             "verbose": self.verbose
         })
 
@@ -393,6 +396,18 @@ class TreeEditNet(nn.Module):
             dropout=dropout, 
             emb_dropout=emb_dropout,
         )
+        if self.x2:
+            self.bottleneck_x2 = BottleNeck(
+                vocab_size,
+                image_size=image_size, 
+                patch_size=patch_size, 
+                dim=dim, 
+                num_layer=num_layer,
+                num_head=num_head, 
+                mlp_dim=mlp_dim, 
+                dropout=dropout, 
+                emb_dropout=emb_dropout,
+            )
 
         self.delete_head = nn.Linear(dim, 2)
         # self.insert_head = nn.Linear(dim, 3)
@@ -616,7 +631,14 @@ class TreeEditNet(nn.Module):
         return r
     
     def forward_decode_head(self, r, name, head, criterion, memory, sources, targets):
-        outputs = self.bottleneck.decode(memory, sources)
+        if getattr(self, "x2", False):
+            outputs = self.bottleneck.decode(memory, sources)
+        else:
+            if name in ["delete", "insdel"]:
+                outputs = self.bottleneck.decode(memory, sources)
+            else:
+                outputs = self.bottleneck_x2.decode(memory, sources)
+                
         predict = head(outputs)
 
         predict_view = predict.view(-1, predict.size(-1))
