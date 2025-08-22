@@ -508,7 +508,7 @@ class TreeEditNet(nn.Module):
 
             descendents = tree_src.ravel()
 
-            if getattr(self, "mask_rate", 0) > 0:
+            if self.training and getattr(self, "mask_rate", 0) > 0:
                 total_masked = int(self.mask_rate * (len(descendents) - 1))
                 masked_nodes = np.random.choice(descendents[1:], size=total_masked, replace=False)
                 for each_node in masked_nodes:
