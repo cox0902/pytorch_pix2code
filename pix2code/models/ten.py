@@ -486,6 +486,7 @@ class TreeEditNet(nn.Module):
                 if self.proof_of_concept and self.verbose:
                     print_list("S-DELETE", sources_delete[i], ignore_idx=0)
                     print_list("T-DELETE", target_delete)
+                    print(target_delete.count(0), target_delete.count(1))
 
                 #
 
@@ -550,6 +551,8 @@ class TreeEditNet(nn.Module):
             if self.proof_of_concept and self.verbose:
                 print_list("S-INSDEL", sources_insdel_list[-1])
                 print_list("T-INSDEL", targets_insdel_list[-1])
+                td = targets_insdel_list[-1]
+                print(td.count(0), td.count(1))
 
             ##
 
@@ -631,7 +634,7 @@ class TreeEditNet(nn.Module):
         return r
     
     def forward_decode_head(self, r, name, head, criterion, memory, sources, targets):
-        if getattr(self, "x2", False):
+        if not getattr(self, "x2", False):
             outputs = self.bottleneck.decode(memory, sources)
         else:
             if name in ["delete", "insdel"]:
