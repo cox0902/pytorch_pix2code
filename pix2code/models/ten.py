@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
+from .mlp import MLP
 from ..tree import TreeNode
 
 
@@ -357,6 +358,7 @@ class TreeEditNet(nn.Module):
                  half_train = None,
                  mask_fill = None,
                  x2 = None,
+                 mlp = None,
 
                  verbose = None,
                  proof_of_concept: bool = False):
@@ -370,6 +372,7 @@ class TreeEditNet(nn.Module):
         self.half_train = (half_train == "1")
         self.mask_fill = (mask_fill == "1")
         self.x2 = (x2 == "1")
+        self.mlp = (int(mlp) if mlp is not None else None)
 
         print({
             "mask_rate": self.mask_rate,
@@ -409,9 +412,13 @@ class TreeEditNet(nn.Module):
                 emb_dropout=emb_dropout,
             )
 
-        self.delete_head = nn.Linear(dim, 2)
-        # self.insert_head = nn.Linear(dim, 3)
-        self.update_head = nn.Linear(dim, vocab_size)
+        if self.mlp is None:
+            self.delete_head = nn.Linear(dim, 2)
+            # self.insert_head = nn.Linear(dim, 3)
+            self.update_head = nn.Linear(dim, vocab_size)
+        else:
+            self.delete_head = MLP(dim, 256, 2, self.mlp)
+            self.update_head = MLP(dim, 256, vocab_size, self.mlp)
 
         self.criterion_delete = nn.CrossEntropyLoss(ignore_index=-1)
         self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
