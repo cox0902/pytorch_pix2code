@@ -47,6 +47,9 @@ def get_model_class_by_name(name):
     elif name == "ten":
         from .ten import TreeEditNet
         return TreeEditNet
+    elif name == "ui2box".lower():
+        from .ui2box import Ui2Box
+        return Ui2Box
     else:
         return None
 

@@ -139,7 +139,7 @@ def check_model(model: str) -> Tuple[bool, bool]:
     # print(model_name)
     if model_name in ["imagecaptionwithbox", "icwb"]:
         return True, False, False
-    elif model_name in ["vit2box"]:
+    elif model_name in ["vit2box", "ui2box"]:
         return True, True, False
     elif model_name in ["imagecaptionwithmsk", "icwm"]:
         return True, False, True
