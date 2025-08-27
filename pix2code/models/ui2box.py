@@ -541,7 +541,7 @@ class Ui2Box(nn.Module):
         self.input_proj = nn.Conv2d(self.backbone.num_channels, hidden_dim, kernel_size=1)
 
         if pretrained is not None:
-            checkpoint = torch.load(pretrained, map_location="cpu")
+            checkpoint = torch.load(pretrained, map_location="cpu", weights_only=False)
             state_dict = { k[9:]: v for k, v in checkpoint["model"].items() if k.startswith("backbone.") }
             self.backbone.load_state_dict(state_dict)
             state_dict = { k[11:]: v for k, v in checkpoint["model"].items() if k.startswith("input_proj.")}
