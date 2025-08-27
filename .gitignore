@@ -169,3 +169,4 @@ temp/
 .DS_Store
 *.npy
 dt/
+*.npz

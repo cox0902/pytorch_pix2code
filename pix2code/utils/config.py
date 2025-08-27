@@ -26,6 +26,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--finetune", type=str)
     parser.add_argument("--test-only", action="store_true", default=False)
+    parser.add_argument("--pretrained", type=str)
 
     parser.add_argument("--opt", type=str)
     parser.add_argument("--lr", default=1e-4, type=float)
@@ -162,6 +163,9 @@ def build_model(args, data_set):
             ft_model_class = get_ft_model_class_by_name(ft_model_name)
             m = ft_model_class(m, **ft_model_params)
         return m
+
+    if args.pretrained:
+        model_params["pretrained"] = args.pretrained
 
     if args.proof_of_concept:
         model_params["proof_of_concept"] = True

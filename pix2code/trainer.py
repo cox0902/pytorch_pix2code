@@ -502,7 +502,10 @@ class Trainer:
 
         best_loss = None
         for epoch in range(epochs):
-            loss = self.train(train_loader, metrics, epoch + 1, proof_of_concept=True)
+            try:
+                loss = self.train(train_loader, metrics, epoch + 1, proof_of_concept=True)
+            except AssertionError:
+                break
 
             if not all([torch.isfinite(p.grad).all() for p in self.model.parameters() if p.grad is not None]):
                 print("= Early stop while grad nan")

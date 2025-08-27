@@ -514,6 +514,7 @@ class Ui2Box(nn.Module):
                  vocab_size,
                  max_len,
                  proof_of_concept=False,
+                 pretrained=None,
                  kl_loss=None,
                  box_loss=None,
                  loss="giou"):
@@ -527,7 +528,8 @@ class Ui2Box(nn.Module):
         print({
             "loss": self.loss,
             "kl_loss": self.kl_loss,
-            "box_loss": self.box_loss
+            "box_loss": self.box_loss,
+            "pretrained": pretrained
         })
 
         self.backbone = build_backbone("resnet50")
@@ -537,6 +539,16 @@ class Ui2Box(nn.Module):
         self.token_embed = TokenEmbedding(vocab_size, hidden_dim)
         self.query_embed = PositionalEncoding(hidden_dim)
         self.input_proj = nn.Conv2d(self.backbone.num_channels, hidden_dim, kernel_size=1)
+
+        if pretrained is not None:
+            checkpoint = torch.load(pretrained, map_location="cpu")
+            state_dict = { k[9:]: v for k, v in checkpoint["model"].items() if k.startswith("backbone.") }
+            self.backbone.load_state_dict(state_dict)
+            state_dict = { k[11:]: v for k, v in checkpoint["model"].items() if k.startswith("input_proj.")}
+            self.input_proj.load_state_dict(state_dict)
+            state_dict = { k[20:]: v for k, v in checkpoint["model"].items() if k.startswith("transformer.encoder.") }
+            self.transformer.encoder.load_state_dict(state_dict)
+            print("pretrained parameters loaded.")
 
         if self.loss == "giou":
             self.criterion = torchvision.ops.generalized_box_iou_loss
