@@ -517,12 +517,14 @@ class Ui2Box(nn.Module):
                  pretrained=None,
                  kl_loss=None,
                  box_loss=None,
+                 add_loss=None,
                  loss="giou"):
         super().__init__()
 
         self.loss = loss
         self.kl_loss = (kl_loss == "1")
         self.box_loss = (box_loss == "1")
+        self.add_loss = (add_loss == "1")
         # assert self.kl_loss ^ self.box_loss
 
         print({
@@ -561,10 +563,13 @@ class Ui2Box(nn.Module):
         else:
             assert False
 
-        if self.kl_loss and self.box_loss:
-            self.log_vars = nn.Parameter(torch.zeros((3, ), requires_grad=True))
-        elif self.kl_loss or self.box_loss:
-            self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
+        if self.add_loss:
+            self.log_vars = None
+        else:
+            if self.kl_loss and self.box_loss:
+                self.log_vars = nn.Parameter(torch.zeros((3, ), requires_grad=True))
+            elif self.kl_loss or self.box_loss:
+                self.log_vars = nn.Parameter(torch.zeros((2, ), requires_grad=True))
         
     def forward(self, batch):
         image = batch["image"]
@@ -598,6 +603,7 @@ class Ui2Box(nn.Module):
             code, decode_lengths, batch_first=True, enforce_sorted=False).data
         
         box_masks = (truth_lbl > 7)
+        # print(box_masks.shape)
 
         preds_box = preds_box[box_masks]
         truth_box = truth_box[box_masks]
@@ -615,6 +621,7 @@ class Ui2Box(nn.Module):
             loss = compute_w2_loss(preds_box, truth_box)
         else:
             loss = self.criterion(preds_box_convert, truth_box_convert, reduction="mean")
+            # print(loss.shape)
 
         r = {
             "loss": loss,
@@ -626,65 +633,97 @@ class Ui2Box(nn.Module):
 
         is_kl_loss = getattr(self, "kl_loss", False)
         is_box_loss = getattr(self, "box_loss", False)
+        if not getattr(self, "add_loss", False):
 
-        if is_kl_loss and is_box_loss:
+            if is_kl_loss and is_box_loss:
 
-            p1 = 1.0 / 3 * torch.exp(-self.log_vars[0])
-            p2 = 1.0 / 3 * torch.exp(-self.log_vars[1])
-            p3 = 1.0 / 3 * torch.exp(-self.log_vars[2])
+                p1 = 1.0 / 3 * torch.exp(-self.log_vars[0])
+                p2 = 1.0 / 3 * torch.exp(-self.log_vars[1])
+                p3 = 1.0 / 3 * torch.exp(-self.log_vars[2])
 
-            r["loss/p1"] = p1
-            r["loss/p2"] = p2
-            r["loss/p3"] = p3
+                r["loss/p1"] = p1
+                r["loss/p2"] = p2
+                r["loss/p3"] = p3
 
-            loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
-                                      preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
-            loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
+                loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                        preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+                loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
 
-            r["loss/iou"] = loss
-            r["loss/kl"] = loss_kl
-            r["loss/box"] = loss_box
-            
-            loss = p1 * loss + p2 * loss_kl + p3 * loss_box
-            loss += self.log_vars[0] + self.log_vars[1] + self.log_vars[2]
-            
-            r["loss"] = loss
+                r["loss/iou"] = loss
+                r["loss/kl"] = loss_kl
+                r["loss/box"] = loss_box
+                
+                loss = p1 * loss + p2 * loss_kl + p3 * loss_box
+                loss += self.log_vars[0] + self.log_vars[1] + self.log_vars[2]
+                
+                r["loss"] = loss
 
-        elif is_kl_loss:
-            
-            p1 = 0.5 * torch.exp(-self.log_vars[0])
-            p2 = 0.5 * torch.exp(-self.log_vars[1])
+            elif is_kl_loss:
+                
+                p1 = 0.5 * torch.exp(-self.log_vars[0])
+                p2 = 0.5 * torch.exp(-self.log_vars[1])
 
-            r["loss/p1"] = p1
-            r["loss/p2"] = p2
+                r["loss/p1"] = p1
+                r["loss/p2"] = p2
 
-            loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
-                                      preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+                loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                        preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
 
-            r["loss/iou"] = loss
-            r["loss/kl"] = loss_kl
-            
-            loss = p1 * loss + p2 * loss_kl
-            loss += self.log_vars[0] + self.log_vars[1]
-            
-            r["loss"] = loss
+                r["loss/iou"] = loss
+                r["loss/kl"] = loss_kl
+                
+                loss = p1 * loss + p2 * loss_kl
+                loss += self.log_vars[0] + self.log_vars[1]
+                
+                r["loss"] = loss
 
-        elif is_box_loss:
+            elif is_box_loss:
 
-            p1 = 0.5 * torch.exp(-self.log_vars[0])
-            p2 = 0.5 * torch.exp(-self.log_vars[1])
+                p1 = 0.5 * torch.exp(-self.log_vars[0])
+                p2 = 0.5 * torch.exp(-self.log_vars[1])
 
-            r["loss/p1"] = p1
-            r["loss/p2"] = p2
+                r["loss/p1"] = p1
+                r["loss/p2"] = p2
 
-            loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
+                loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
 
-            r["loss/iou"] = loss
-            r["loss/box"] = loss_box
-            
-            loss = p1 * loss + p2 * loss_box
-            loss += self.log_vars[0] + self.log_vars[1]
-            
-            r["loss"] = loss
+                r["loss/iou"] = loss
+                r["loss/box"] = loss_box
+                
+                loss = p1 * loss + p2 * loss_box
+                loss += self.log_vars[0] + self.log_vars[1]
+                
+                r["loss"] = loss
+
+        else:
+
+            if is_kl_loss and is_box_loss:
+
+                loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                        preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+                loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
+
+                r["loss/iou"] = loss
+                r["loss/kl"] = loss_kl
+                r["loss/box"] = loss_box
+                r["loss"] = loss + loss_kl + loss_box
+
+            elif is_kl_loss:
+                
+                loss_kl = compute_kl_loss(truth_box[:, :2], torch.log((truth_box[:, 2:] / 2.0)), 
+                                        preds_box[:, :2], torch.log((preds_box[:, 2:] / 2.0)))
+
+                r["loss/iou"] = loss
+                r["loss/kl"] = loss_kl
+                r["loss"] = loss + loss_kl
+
+            elif is_box_loss:
+
+                loss_box = F.l1_loss(preds_box_convert, truth_box_convert, reduction="mean")
+                # loss_box = F.l1_loss(preds_box, truth_box, reduction="mean")
+
+                r["loss/iou"] = loss
+                r["loss/box"] = loss_box
+                r["loss"] = loss + loss_box
 
         return r
