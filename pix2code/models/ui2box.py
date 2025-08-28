@@ -231,17 +231,17 @@ class Transformer(nn.Module):
         # print("tgt_mask:", tgt_mask.shape)
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
-        src = src.flatten(2).permute(2, 0, 1)
-        pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
+        src = src.flatten(2).permute(0, 2, 1)
+        pos_embed = pos_embed.flatten(2).permute(0, 2, 1)
         # query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        tgt = tgt.permute(1, 0, 2)
+        tgt = tgt  # .permute(1, 0, 2)
         # tgt_mask = tgt_mask.permute(1, 0)
-        query_embed = query_embed.permute(1, 0, 2)
+        query_embed = query_embed  # .permute(1, 0, 2)
 
         memory = self.encoder(src, pos=pos_embed)
         hs = self.decoder(tgt, memory, tgt_key_padding_mask=tgt_mask,
                           pos=pos_embed, query_pos=query_embed)
-        return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w)
+        return hs  # .transpose(1, 2)  # , memory.permute(1, 2, 0).view(bs, c, h, w)
 
 
 class TransformerEncoder(nn.Module):
@@ -314,7 +314,8 @@ class TransformerEncoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+                                               batch_first=True)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -374,8 +375,10 @@ class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1,
                  activation="relu", normalize_before=False):
         super().__init__()
-        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+                                               batch_first=True)
+        self.multihead_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout,
+                                                    batch_first=True)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -518,6 +521,7 @@ class Ui2Box(nn.Module):
                  kl_loss=None,
                  box_loss=None,
                  add_loss=None,
+                 add_txt_encoder=None,
                  loss="giou"):
         super().__init__()
 
@@ -525,12 +529,14 @@ class Ui2Box(nn.Module):
         self.kl_loss = (kl_loss == "1")
         self.box_loss = (box_loss == "1")
         self.add_loss = (add_loss == "1")
+        self.add_txt_encoder = (add_txt_encoder == "1")
         # assert self.kl_loss ^ self.box_loss
 
         print({
             "loss": self.loss,
             "kl_loss": self.kl_loss,
             "box_loss": self.box_loss,
+            "add_txt_encoder": self.add_txt_encoder,
             "pretrained": pretrained
         })
 
@@ -541,6 +547,12 @@ class Ui2Box(nn.Module):
         self.token_embed = TokenEmbedding(vocab_size, hidden_dim)
         self.query_embed = PositionalEncoding(hidden_dim)
         self.input_proj = nn.Conv2d(self.backbone.num_channels, hidden_dim, kernel_size=1)
+
+        if self.add_txt_encoder:
+            self.text_encoder = nn.TransformerEncoder(
+                nn.TransformerEncoderLayer(d_model=256, nhead=8, batch_first=True),
+                num_layers=6
+            )
 
         if pretrained is not None:
             checkpoint = torch.load(pretrained, map_location="cpu", weights_only=False)
@@ -583,12 +595,29 @@ class Ui2Box(nn.Module):
         src = features[-1]
         tgt = self.token_embed(code)
         query = self.query_embed(tgt)
-        hs = self.transformer(self.input_proj(src), tgt, code == 0, query, pos[-1])[0] 
+
+        # print("<<<<")
+        # print((tgt + query).shape)
+        # print((code == 0).shape)
+
+        # print(code)
+
+        if getattr(self, "add_txt_encoder", False):
+            encoded_text = self.text_encoder(tgt + query, src_key_padding_mask=(code == 0))
+        else:
+            encoded_text = tgt
+
+        # print(encoded_text.shape)
+
+        # print(">>>>")
+
+        hs = self.transformer(self.input_proj(src), encoded_text, code == 0, query, pos[-1])[0] 
+
 
         # print("hs:", hs.shape)
 
         preds_box = self.bbox_embed(hs).sigmoid()
-        preds_box = preds_box[0]
+        # preds_box = preds_box[0]
 
         # print("preds_box:", preds_box.shape)
 
