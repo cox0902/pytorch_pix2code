@@ -146,6 +146,8 @@ def check_model(model: str) -> Tuple[bool, bool]:
         return True, False, True
     elif model_name in ["imagecaptionwithspa", "icws"]:
         return True, False, False
+    elif model_name in ["ten"]:
+        return True, False, False
     else:
         return False, False, False
 

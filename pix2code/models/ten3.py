@@ -9,7 +9,6 @@ from apted import APTED, Config
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms.v2 as T
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
@@ -334,36 +333,6 @@ def make_update_label(n, v):
     return n.align.iv if n else -1
 
 
-def assign_postorder_indices(tree: TreeNode, index):
-    for each in tree.children:
-        index = assign_postorder_indices(each, index)
-    tree.index = index
-    return index + 1
-
-def get_erase_mask(tree: TreeNode, mapping):
-    assign_postorder_indices(tree, 0)
-    # print([(each, each.index) for each in tree.ravel()])
-
-    ins_ops = [node_dst for node_src, node_dst in mapping if node_src is None]
-    # print([(each, each.index) for each in ins_ops])
-    
-    # indexes = [each.index for each in ins_ops]
-    # graph = tree.visualize(vocabs, label_formatter=lambda n: f"{vocabs[n.iv]}#{n.id[-3:]}\n{f'>>{n.index}<<' if n.index in indexes else n.index}")
-    # graph = tree.visualize(vocabs, label_formatter=lambda n: f"{f'>>{vocabs[n.iv]}<<' if n.index in indexes else vocabs[n.iv]}")
-
-    ins_ops = sorted(ins_ops, key=lambda n: n.index)
-    # print([(each, each.index) for each in ins_ops])
-
-    mask = np.zeros((256, 256), dtype=np.int8)
-    for each in ins_ops:
-        if len(each.children) == 0:
-            # print("+")
-            x0, y0, x1, y1 = [min(max(0, int(item)), 255) for item in each.mask]
-            mask[y0:y1, x0:x1] = 1
-        each.delete()
-    return mask  # , graph
-
-
 MAX_SEQ_LEN = 450
 
 
@@ -403,12 +372,11 @@ class TreeEditNet(nn.Module):
         self.mask_rate = (float(mask_rate) if mask_rate is not None else 0.0)
         self.min_insert = (int(min_insert) if min_insert is not None else 0)
         self.half_train = (half_train == "1")
-        self.mask_fill = mask_fill
+        self.mask_fill = (mask_fill == "1")
         self.x2 = (x2 == "1")
         self.mlp = (int(mlp) if mlp is not None else None)
 
         print({
-            "bottleneck": bottleneck,
             "mask_rate": self.mask_rate,
             "min_insert": self.min_insert,
             "half_train": self.half_train,
@@ -464,16 +432,12 @@ class TreeEditNet(nn.Module):
         self.criterion_delete = nn.CrossEntropyLoss(ignore_index=-1)
         self.criterion_update = nn.CrossEntropyLoss(ignore_index=-1)
 
-        self.transform = T.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
-
     def forward(self, batch):
 
         #
 
         images = batch["image"]
         targets = batch["code"].long()  # (B, S)
-        rects = batch["rect"]
-        # print(rects)
         # targets_lens = batch["code_len"]
         batch_size = targets.size(0)
         half_train = getattr(self, "half_train", False)
@@ -502,9 +466,6 @@ class TreeEditNet(nn.Module):
         sources_insupd_list = []
         targets_insupd_list = []
 
-        images_1 = self.transform(torch.ones_like(images))
-        images_2 = self.transform(torch.ones_like(images))
-
         for i, (src, dst) in enumerate(zip(predicts, targets)):
 
             if self.proof_of_concept and self.verbose:
@@ -513,7 +474,7 @@ class TreeEditNet(nn.Module):
                 print_list("--TARGET", dst, ignore_idx=0)
 
             tree_src = TreeNode.build_tree(src)
-            tree_dst = TreeNode.build_tree(dst, mask=rects[i])
+            tree_dst = TreeNode.build_tree(dst)
 
             if not half_train:
                 _, mapping = compute_ted(tree_src, tree_dst)
@@ -559,14 +520,7 @@ class TreeEditNet(nn.Module):
                     print_list("S-UPDATE", source_update)
                     print_list("T-UPDATE", target_update)
 
-                mask = get_erase_mask(tree_dst, mapping)
-                images_1[i] = images[i] * (1 - mask) + images_1[i] * mask
-
             #
-
-            tree_dst = TreeNode.build_tree(dst, mask=rects[i])
-
-            mask_fill = getattr(self, "mask_fill", None)
 
             descendents = tree_src.ravel()
 
@@ -574,10 +528,8 @@ class TreeEditNet(nn.Module):
                 total_masked = int(self.mask_rate * (len(descendents) - 1))
                 masked_nodes = np.random.choice(descendents[1:], size=total_masked, replace=False)
                 for each_node in masked_nodes:
-                    if mask_fill == "rand":
+                    if getattr(self, "mask_fill", False):
                         each_node.iv = np.random.randint(8, 90)
-                    elif mask_fill == "pick":
-                        each_node.iv = np.random.choice(dst[dst > 7], 1)[0]
                     else:
                         each_node.iv = 2
 
@@ -591,10 +543,8 @@ class TreeEditNet(nn.Module):
                 if len(n.children) > 0:
                     insert_i = np.random.randint(0, len(n.children) + 1)
                     insert_j = np.random.randint(0, len(n.children) + 1)
-                if mask_fill == "rand":
+                if getattr(self, "mask_fill", False):
                     n.insert(np.random.randint(8, 90), i=insert_i, j=insert_j)
-                elif mask_fill == "pick":
-                    n.insert(np.random.choice(dst[dst > 7], 1)[0], i=insert_i, j=insert_j)
                 else:
                     n.insert(2, i=insert_i, j=insert_j)
 
@@ -625,11 +575,8 @@ class TreeEditNet(nn.Module):
             for node_src, node_dst in mapping:
                 if node_dst is None:  # DELETE
                     node_src.delete()
-                # elif node_src is None:  # INSERT
-                #     node_dst.delete()
-
-            mask = get_erase_mask(tree_dst, mapping)
-            images_2[i] = images[i] * (1 - mask) + images_2[i] * mask
+                elif node_src is None:  # INSERT
+                    node_dst.delete()
 
             sources_insupd_list.append(build_list(tree_src, make_default))
             targets_insupd_list.append(build_list(tree_dst, make_default_label))
@@ -682,14 +629,15 @@ class TreeEditNet(nn.Module):
 
         r = {}
 
+        # 
+
+        memory = self.bottleneck.encode(images)
+
         #
 
         if not half_train:
-            memory = self.bottleneck.encode(images_1)
             self.forward_decode_head(r, "delete", self.delete_head, self.criterion_delete, memory, sources_delete, targets_delete)
             self.forward_decode_head(r, "update", self.update_head, self.criterion_update, memory, sources_update, targets_update)
-
-        memory = self.bottleneck.encode(images_2)
         self.forward_decode_head(r, "insdel", self.delete_head, self.criterion_delete, memory, sources_insdel, targets_insdel)
         self.forward_decode_head(r, "insupd", self.update_head, self.criterion_update, memory, sources_insupd, targets_insupd)
 

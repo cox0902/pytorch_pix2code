@@ -187,12 +187,14 @@ class TreeNode:
                   vocabs: List[str], 
                   show_id: bool = False,
                   show_connections: bool = False,
-                  show_controls: bool = True):
+                  show_controls: bool = True, 
+                  label_formatter = None):
         from graphviz import Digraph
         dot = Digraph()
-        label_formatter = partial(default_label_formatter, 
-                                  vocabs=vocabs,
-                                  show_id=show_id)
+        if label_formatter is None:
+            label_formatter = partial(default_label_formatter, 
+                                    vocabs=vocabs,
+                                    show_id=show_id)
         TreeNode._make_graph(self, 
                              dot, 
                              label_formatter,
