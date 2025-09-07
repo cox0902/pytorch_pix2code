@@ -340,7 +340,7 @@ def assign_postorder_indices(tree: TreeNode, index):
     tree.index = index
     return index + 1
 
-def get_erase_mask(tree: TreeNode, mapping):
+def get_erase_mask(tree: TreeNode, mapping, device=None):
     assign_postorder_indices(tree, 0)
     # print([(each, each.index) for each in tree.ravel()])
 
@@ -354,12 +354,12 @@ def get_erase_mask(tree: TreeNode, mapping):
     ins_ops = sorted(ins_ops, key=lambda n: n.index)
     # print([(each, each.index) for each in ins_ops])
 
-    mask = np.zeros((256, 256), dtype=np.int8)
+    mask = torch.zeros((256, 256), dtype=torch.float32, device=device)
     for each in ins_ops:
         if len(each.children) == 0:
             # print("+")
             x0, y0, x1, y1 = [min(max(0, int(item)), 255) for item in each.mask]
-            mask[y0:y1, x0:x1] = 1
+            mask[y0:y1, x0:x1] = 1.
         each.delete()
     return mask  # , graph
 
@@ -559,7 +559,7 @@ class TreeEditNet(nn.Module):
                     print_list("S-UPDATE", source_update)
                     print_list("T-UPDATE", target_update)
 
-                mask = get_erase_mask(tree_dst, mapping)
+                mask = get_erase_mask(tree_dst, mapping, images.device)
                 images_1[i] = images[i] * (1 - mask) + images_1[i] * mask
 
             #
@@ -628,7 +628,7 @@ class TreeEditNet(nn.Module):
                 # elif node_src is None:  # INSERT
                 #     node_dst.delete()
 
-            mask = get_erase_mask(tree_dst, mapping)
+            mask = get_erase_mask(tree_dst, mapping, images.device)
             images_2[i] = images[i] * (1 - mask) + images_2[i] * mask
 
             sources_insupd_list.append(build_list(tree_src, make_default))
